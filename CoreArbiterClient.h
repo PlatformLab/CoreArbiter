@@ -18,6 +18,8 @@
 
 #include <sys/types.h>
 #include <iostream>
+#include <mutex>
+#include <stdexcept>
 #include <string.h>
 
 #include "CoreArbiterCommon.h"
@@ -27,24 +29,47 @@ namespace CoreArbiter {
 
 class CoreArbiterClient {
   public:
-    CoreArbiterClient(std::string serverSocketPath);
+    // Singleton methods
+    static CoreArbiterClient& getInstance(std::string serverSocketPath) {
+        static CoreArbiterClient instance(serverSocketPath);
+        return instance;
+    }
+    CoreArbiterClient(CoreArbiterClient const&) = delete;
+    void operator=(CoreArbiterClient const&) = delete;
+
     ~CoreArbiterClient();
 
-    void setNumCores(/* priority array */);
-    void blockUntilCoreAvailable();
+    void setNumCores(core_t numCores);
+    bool shouldReleaseCore();
+    core_t blockUntilCoreAvailable();
+    core_t getOwnedCoreCount();
+
+    class ClientException: public std::runtime_error {
+      public:
+        ClientException(std::string err) : runtime_error(err) {}
+    };
+
+    typedef std::unique_lock<std::mutex> Lock;
 
   private:
-    void createNewServerConnection(std::string serverSocketPath);
+    // Constructor is private because CoreArbiterClient is a singleton
+    CoreArbiterClient(std::string serverSocketPath);
+
+    void createNewServerConnection();
     void registerThread();
+    void readData(int fd, void* buf, size_t numBytes, std::string err);
+
+    std::mutex mutex;
+    core_t* coreReleaseRequestCount; // shared memory, incremented by server
+    core_t coreReleaseCount; // local, incremented by client
+    core_t ownedCoreCount;
 
     std::string serverSocketPath;
     static thread_local int serverSocket;
     int sharedMemFd;
-    core_count_t* coreReleaseRequestCount; // shared memory, incremented by server
-    core_count_t coreReleaseCount; // local, incremented by client
-    static thread_local bool registeredAsThread;
 
     static Syscall* sys;
+    static thread_local core_t coreId;
 };
 
 }

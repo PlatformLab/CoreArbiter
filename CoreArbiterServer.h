@@ -16,6 +16,8 @@
 #ifndef CORE_ARBITER_SERVER_H_
 #define CORE_ARBITER_SERVER_H_
 
+#include <deque>
+#include <fstream>
 #include <sys/types.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,67 +36,78 @@ class CoreArbiterServer {
   public:
     CoreArbiterServer(std::string socketPath,
                       std::string sharedMemPathPrefix,
-                      std::vector<uint32_t> exclusiveCores);
+                      std::vector<core_t> exclusiveCores);
     ~CoreArbiterServer();
     void startArbitration();
 
-    // class ServerException: public std::runtime_error {
-    //   public:
-    //     ServerException(std::string err) : runtime_error(err) {}
-    // };
-
   private:
-    void acceptConnection(int listenFd);
-    void registerProcessInfo(int connectingFd);
-    void registerThreadInfo(int connectingFd);
-    void threadBlocking(int threadFd);
-    void coresRequested(); // TODO: pass in core priorities
-    void timeoutCoreRetrieval();
-
-    void createCpuset(std::string dirName, std::string cores, std::string mems);
-    void moveProcsToCpuset(std::string fromPath, std::string toPath);
-    void removeOldCpusets(std::string arbiterCpusetPath);
-
-    struct ProcessInfo {
-        pid_t id;
-        int socket;
-        int sharedMemFd;
-        core_count_t* coreReleaseRequestCount; // only ever incremented by server
-        std::unordered_set<pid_t> activeThreadIds;
-        std::unordered_set<pid_t> blockedThreadIds;
-
-        ProcessInfo()
-            : id(-1)
-            , socket(-1)
-            , sharedMemFd(-1)
-            , coreReleaseRequestCount(NULL)
-           {} 
-
-        ProcessInfo(pid_t id, int socket, int sharedMemFd, core_count_t* coreReleaseRequestCount)
-            : id(id)
-            , socket(socket)
-            , sharedMemFd(sharedMemFd)
-            , coreReleaseRequestCount(coreReleaseRequestCount)
-        {}
-    };
-
+    enum ThreadState { RUNNING_EXCLUSIVE, RUNNING_SHARED, BLOCKED };
     struct ThreadInfo {
         pid_t threadId;
         pid_t processId;
         int socket;
+        core_t coreId;
+        ThreadState state;
 
-        ThreadInfo()
-            : threadId(-1)
-            , processId(-1)
-            ,  socket(-1)
-        {}
+        ThreadInfo() {}
 
         ThreadInfo(pid_t threadId, pid_t processId, int socket)
             : threadId(threadId)
             , processId(processId)
             , socket(socket)
+            , coreId(0)
+            , state(RUNNING_SHARED)
         {}
     };
+
+    struct ProcessInfo {
+        pid_t id;
+        int sharedMemFd;
+        
+        core_t* coreReleaseRequestCount; // only ever incremented by server
+        core_t coreReleaseCount;
+
+        core_t numCoresOwned;
+        core_t numCoresDesired;
+
+        std::vector<struct ThreadInfo*> threads;
+
+        ProcessInfo() {}
+
+        ProcessInfo(pid_t id, int sharedMemFd, core_t* coreReleaseRequestCount)
+            : id(id)
+            , sharedMemFd(sharedMemFd)
+            , coreReleaseRequestCount(coreReleaseRequestCount)
+            , coreReleaseCount(0)
+            , numCoresOwned(0)
+            , numCoresDesired(0)
+        {}
+    };
+
+    struct CoreInfo {
+        core_t coreId;
+        pid_t exclusiveThreadId;
+        std::ofstream cpusetFile;
+
+        CoreInfo()
+            : coreId(0)
+            , exclusiveThreadId(-1)
+        {}
+    };
+
+    void acceptConnection(int listenFd);
+    void threadBlocking(int threadFd);
+    void coresRequested(int connectingFd);
+    void timeoutCoreRetrieval();
+    void cleanupConnection(int connectingFd);
+
+    void grantCores();
+    bool readData(int fd, void* buf, size_t numBytes, std::string err);
+    void createCpuset(std::string dirName, std::string cores, std::string mems);
+    void moveProcsToCpuset(std::string fromPath, std::string toPath);
+    void removeOldCpusets(std::string arbiterCpusetPath);
+    void moveThreadToCore(struct ThreadInfo* thread, struct CoreInfo* core);
+    void removeThreadFromCore(struct ThreadInfo* thread);
 
     static std::string cpusetPath;
 
@@ -102,11 +115,18 @@ class CoreArbiterServer {
     int epollFd;
     int listenFd;
 
-    std::unordered_map<int, ThreadInfo> threadFdToInfo;
-    std::unordered_map<pid_t, ProcessInfo> processIdToInfo;
-    std::unordered_set<int> unregisteredConnections;
+    std::unordered_map<int, ThreadInfo*> threadFdToInfo;
+    std::unordered_map<pid_t, ProcessInfo*> processIdToInfo;
+
+    std::vector<struct CoreInfo> exclusiveCores;
+    struct CoreInfo sharedCore;
+
+    // The front of the queue has the highest priority (for now, longest
+    // blocking) threads.
+    std::deque<struct ProcessInfo*> processesOwedCores;
 
     static Syscall* sys;
+    static bool testingSkipCpusetAllocation;
 };
 
 }

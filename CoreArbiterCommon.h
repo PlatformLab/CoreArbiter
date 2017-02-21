@@ -19,10 +19,9 @@
 #include <cstddef>
 #include <stdint.h>
 
-#define PROCESS_CONN 0
-#define THREAD_CONN 1
-#define THREAD_BLOCK 2
+#define THREAD_BLOCK 1
+#define CORE_REQUEST 2
 
-typedef uint64_t core_count_t;
+typedef ssize_t core_t;
 
 #endif // CORE_ARBITER_COMMON_H

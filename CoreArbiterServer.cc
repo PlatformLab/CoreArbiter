@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <assert.h>
 #include <iostream>
-#include <fstream>
 #include <sys/un.h>
 #include <thread>
 
@@ -26,44 +26,71 @@ std::string CoreArbiterServer::cpusetPath = "/sys/fs/cgroup/cpuset";
 
 static Syscall defaultSyscall;
 Syscall* CoreArbiterServer::sys = &defaultSyscall;
+bool CoreArbiterServer::testingSkipCpusetAllocation = false;
 
 CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
-                                     std::vector<uint32_t> exclusiveCores)
+                                     std::vector<core_t> exclusiveCoreIds)
     : sharedMemPathPrefix(sharedMemPathPrefix)
     , epollFd(-1)
     , listenFd(-1)
+    , exclusiveCores(exclusiveCoreIds.size())
 {
     if (sys->geteuid()) {
         fprintf(stderr, "The core arbiter server must be run as root\n");
         exit(-1);
     }
 
-    // Remove any old cpusets from a previous server
-    std::string arbiterCpusetPath = cpusetPath + "/CoreArbiter";
-    removeOldCpusets(arbiterCpusetPath);
+    if (!testingSkipCpusetAllocation) {
+        // Remove any old cpusets from a previous server
+        std::string arbiterCpusetPath = cpusetPath + "/CoreArbiter";
+        removeOldCpusets(arbiterCpusetPath);
 
-    // Create a new cpuset directory for core arbitration. Since this is going
-    // to be a parent of all the arbiter's individual core cpusets, it needs to
-    // include every core.
-    unsigned numCores = std::thread::hardware_concurrency();
-    std::string allCores = "0-" + std::to_string(numCores - 1);
-    createCpuset(arbiterCpusetPath, allCores, "0");
-    // Set up exclusive cores
-    for (uint32_t core : exclusiveCores) {
-        std::string exclusiveCpusetPath =
-            arbiterCpusetPath + "/Exclusive" + std::to_string(core);
-        createCpuset(exclusiveCpusetPath, std::to_string(core), "0");
+        // Create a new cpuset directory for core arbitration. Since this is going
+        // to be a parent of all the arbiter's individual core cpusets, it needs to
+        // include every core.
+        unsigned numCores = std::thread::hardware_concurrency();
+        std::string allCores = "0-" + std::to_string(numCores - 1);
+        createCpuset(arbiterCpusetPath, allCores, "0");
+        // Set up exclusive cores
+        for (core_t core : exclusiveCoreIds) {
+            std::string exclusiveCpusetPath =
+                arbiterCpusetPath + "/Exclusive" + std::to_string(core);
+            createCpuset(exclusiveCpusetPath, std::to_string(core), "0");
+        }
+
+        // Set up cpuset for all other processes. For now, core 0 is always shared.
+        std::string sharedCpusetPath = arbiterCpusetPath + "/Shared";
+        createCpuset(sharedCpusetPath, "0", "0");
+
+        // Move all of the currently running processes to the shared cpuset
+        std::string allProcsPath = cpusetPath + "/cgroup.procs";
+        std::string sharedProcsPath = sharedCpusetPath + "/cgroup.procs";
+        moveProcsToCpuset(allProcsPath, sharedProcsPath);
+
+        // Cpusets should be set up properly now, so we'll save the files needed
+        // for moving processes between cpusets
+        std::string sharedTasksPath = sharedCpusetPath + "/tasks";
+        sharedCore.coreId = 0;
+        sharedCore.cpusetFile.open(sharedTasksPath);
+        if (!sharedCore.cpusetFile.is_open()) {
+            fprintf(stderr, "Unable to open %s\n", sharedTasksPath.c_str());
+            exit(-1);
+        }
+
+        for (size_t i = 0; i < exclusiveCoreIds.size(); i++) {
+            core_t coreId = exclusiveCoreIds[i];
+            std::string exclusiveTasksPath = arbiterCpusetPath + "/Exclusive" +
+                                             std::to_string(coreId) + "/tasks";
+            struct CoreInfo* coreInfo = &exclusiveCores[i];
+            coreInfo->coreId = coreId;
+            coreInfo->cpusetFile.open(exclusiveTasksPath);
+            if (!coreInfo->cpusetFile.is_open()) {
+                fprintf(stderr, "Unable to open %s\n", exclusiveTasksPath.c_str());
+                exit(-1);
+            }
+        }
     }
-
-    // Set up cpuset for all other processes. For now, core 0 is always shared.
-    std::string sharedCpusetPath = arbiterCpusetPath + "/Shared";
-    createCpuset(sharedCpusetPath, "0", "0");
-
-    // Move all of the currently running processes to the shared cpuset
-    std::string allProcsPath = cpusetPath + "/cgroup.procs";
-    std::string sharedProcsPath = sharedCpusetPath + "/cgroup.procs";
-    moveProcsToCpuset(allProcsPath, sharedProcsPath);
 
     // Set up unix domain socket
     listenFd = sys->socket(AF_UNIX, SOCK_STREAM, 0);
@@ -143,9 +170,7 @@ CoreArbiterServer::startArbitration()
                 printf("detected closed connection for fd %d\n", connectingFd);
                 sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
                                connectingFd, &events[i]);
-                sys->close(connectingFd);
-                // TODO: cleanup state
-                
+                cleanupConnection(connectingFd);
             } else if (connectingFd == listenFd) {
                 acceptConnection(listenFd);
             } else {
@@ -155,27 +180,17 @@ CoreArbiterServer::startArbitration()
                 }
 
                 uint8_t msgType;
-                ssize_t bytesRead =
-                    sys->recv(connectingFd, &msgType, sizeof(uint8_t), 0);
-                if (bytesRead < 0) {
-                    fprintf(stderr, "Error reading message type: %s\n",
-                            strerror(errno));
-                    continue;
-                } else if (bytesRead < 1) {
-                    fprintf(stderr, "Expecing message type, but got empty "
-                                    "message\n");
+                if (!readData(connectingFd, &msgType, sizeof(uint8_t),
+                             "Error reading message type")) {
                     continue;
                 }
 
                 switch(msgType) {
-                    case PROCESS_CONN:
-                        registerProcessInfo(connectingFd);
-                        break;
-                    case THREAD_CONN:
-                        registerThreadInfo(connectingFd);
-                        break;
                     case THREAD_BLOCK:
                         threadBlocking(connectingFd);
+                        break;
+                    case CORE_REQUEST:
+                        coresRequested(connectingFd);
                         break;
                     default:
                         fprintf(stderr, "Unknown message type: %u\n", msgType);
@@ -209,148 +224,151 @@ CoreArbiterServer::acceptConnection(int listenFd)
         return;
     }
 
-    unregisteredConnections.insert(remoteFd);
-
-    printf("Accepted new connection on socket %d\n", remoteFd);
-}
-
-void
-CoreArbiterServer::registerProcessInfo(int connectingFd)
-{
-    if (unregisteredConnections.find(connectingFd) ==
-            unregisteredConnections.end()) {
-        fprintf(stderr, "Fd %d has already registered as a process\n",
-                connectingFd);
-        return;
-    }
-
-    // Read connecting process ID from socket. If a thread is connecting, its
-    // corresponding process ID should come first.
+    // Read connecting process ID from socket.
     pid_t processId;
-    if (sys->recv(connectingFd, &processId, sizeof(size_t), 0) < 0) {
-        fprintf(stderr, "Error receiving process ID: %s\n", strerror(errno));
-        return;
-    }
-
-    // Construct shared memory page
-    std::string socketPath = sharedMemPathPrefix + std::to_string(processId);
-    int sharedMemFd = sys->open(socketPath.c_str(),
-                               O_CREAT | O_RDWR | O_TRUNC, S_IRWXU);
-    if (sharedMemFd < 0) {
-        fprintf(stderr, "Error opening shared memory page: %s\n",
-                strerror(errno));
-        return;
-    }
-
-    // Our clients are not necessarily root
-    sys->chmod(socketPath.c_str(), 0777);
-
-    sys->ftruncate(sharedMemFd, sizeof(core_count_t));
-    core_count_t* coreReleaseRequestCount =
-        (core_count_t *)sys->mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
-                             MAP_SHARED, sharedMemFd, 0);
-    if (coreReleaseRequestCount == MAP_FAILED) {
-        fprintf(stderr, "Error on mmap: %s\n", strerror(errno));
-        // TODO: send error to client
-        return;
-    }
-    *coreReleaseRequestCount = 0;
-
-    // Send location of shared memory to the application.
-    // First in the packet is the size of the path, followed by the path itself.
-    // The path is null termianted, and the size includes the \0.
-    size_t pathLen = socketPath.size() + 1;
-    char pathPacket[sizeof(size_t) + pathLen];
-    memcpy(pathPacket, &pathLen, sizeof(size_t));
-    memcpy(pathPacket + sizeof(size_t), socketPath.c_str(), pathLen);
-    if (sys->send(connectingFd, pathPacket, sizeof(pathPacket), 0) < 0) {
-        fprintf(stderr, "Send failed: %s\n", strerror(errno));
-        return;
-    }
-
-    // Update process information since everything succeeded
-    processIdToInfo[processId] = ProcessInfo(
-        processId, connectingFd, sharedMemFd, coreReleaseRequestCount);
-
-    printf("Registered process with id %d on socket %d\n",
-           processId, connectingFd);
-
-    unregisteredConnections.erase(connectingFd);
-}
-
-void
-CoreArbiterServer::registerThreadInfo(int connectingFd)
-{
-    // Read connecting process ID from socket. If a thread is connecting, its
-    // corresponding process ID should come first.
-    pid_t processId;
-    ssize_t read = sys->recv(connectingFd, &processId, sizeof(pid_t), 0);
-    if (read < 0) {
-        fprintf(stderr, "Error receiving process ID: %s\n", strerror(errno));
-        return;
-    }
-    printf("read %ld bytes of process id: %d\n", read, processId);
-
-    if (processIdToInfo.find(processId) == processIdToInfo.end()) {
-        fprintf(stderr, "Received request for thread whose process has "
-                "not registered.\n");
+    if (!readData(remoteFd, &processId, sizeof(pid_t),
+                   "Error receiving process ID")) {
         return;
     }
 
     pid_t threadId;
-    read = sys->recv(connectingFd, &threadId, sizeof(pid_t), 0);
-    if (read < 0) {
-        fprintf(stderr, "Error receiving thread ID: %s\n", strerror(errno));
+    if (!readData(remoteFd, &threadId, sizeof(pid_t),
+                  "Error receiving thread ID")) {
         return;
     }
-    printf("read %ld bytes of thread id: %d\n", read, threadId);
 
-    threadFdToInfo[connectingFd] =
-        ThreadInfo(threadId, processId, connectingFd);
-    processIdToInfo[processId].activeThreadIds.insert(threadId);
+    if (processIdToInfo.find(processId) == processIdToInfo.end()) {
+        // This is a new process, so we need to do some setup.
+        // Construct shared memory page
+        std::string socketPath = sharedMemPathPrefix +
+                                 std::to_string(processId);
+        int sharedMemFd = sys->open(socketPath.c_str(),
+                                   O_CREAT | O_RDWR | O_TRUNC, S_IRWXU);
+        if (sharedMemFd < 0) {
+            fprintf(stderr, "Error opening shared memory page: %s\n",
+                    strerror(errno));
+            return;
+        }
+
+        // Our clients are not necessarily root
+        sys->chmod(socketPath.c_str(), 0777);
+
+        sys->ftruncate(sharedMemFd, sizeof(core_t));
+        core_t* coreReleaseRequestCount =
+            (core_t *)sys->mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
+                                 MAP_SHARED, sharedMemFd, 0);
+        if (coreReleaseRequestCount == MAP_FAILED) {
+            fprintf(stderr, "Error on mmap: %s\n", strerror(errno));
+            // TODO: send error to client
+            return;
+        }
+        *coreReleaseRequestCount = 0;
+
+        // Send location of shared memory to the application.
+        // First in the packet is the size of the path, followed by the path
+        // itself. The path is null termianted, and the size includes the \0.
+        size_t pathLen = socketPath.size() + 1;
+        char pathPacket[sizeof(size_t) + pathLen];
+        memcpy(pathPacket, &pathLen, sizeof(size_t));
+        memcpy(pathPacket + sizeof(size_t), socketPath.c_str(), pathLen);
+        if (sys->send(remoteFd, pathPacket, sizeof(pathPacket), 0) < 0) {
+            fprintf(stderr, "Send failed: %s\n", strerror(errno));
+            return;
+        }
+
+        // Update process information since everything succeeded
+        processIdToInfo[processId] = new ProcessInfo(
+            processId, sharedMemFd, coreReleaseRequestCount);
+
+        printf("Registered process with id %d on socket %d\n",
+               processId, remoteFd);
+    }
+
+    struct ThreadInfo* threadInfo = new ThreadInfo(threadId, processId,
+                                                   remoteFd);
+    threadFdToInfo[remoteFd] = threadInfo;
+    processIdToInfo[processId]->threads.push_back(threadInfo);
 
     printf("Registered thread with id %d on process %d\n",
            threadId, processId);
-    
-    // This connection may have been registered already, in the case where
-    // the fd is used to register a process and then a thread. If it's a new
-    // thread, then it was unregistered.
-    unregisteredConnections.erase(connectingFd);
 }
+
 
 void
 CoreArbiterServer::threadBlocking(int threadFd)
 {
-    struct ThreadInfo* threadInfo = &threadFdToInfo[threadFd];
-    pid_t processId = threadInfo->processId;
-    pid_t threadId = threadInfo->threadId;
-    struct ProcessInfo* processInfo = &processIdToInfo[processId];
-    if (processInfo->activeThreadIds.find(threadId) !=
-        processInfo->activeThreadIds.end()) {
-        
-        processInfo->activeThreadIds.erase(threadId);
-        processInfo->blockedThreadIds.insert(threadId);
-        printf("Added thread %d as blocked\n", threadId);
-
-    } else {
-        printf("Thread %d was already blocked\n", threadId);
-    }
-
-    // TODO: change this to actual arbitration code
-    printf("sleeping...\n");
-    sleep(3);
-    uint8_t wakeup;
-    if (sys->send(threadFd, &wakeup, sizeof(uint8_t), 0) < 0) {
-        fprintf(stderr, "Send failed: %s\n", strerror(errno));
+    if (threadFdToInfo.find(threadFd) == threadFdToInfo.end()) {
+        fprintf(stderr, "Unknown thread is blocking\n");
         return;
     }
-    printf("Woke up thread\n");
+
+    struct ThreadInfo* threadInfo = threadFdToInfo[threadFd];
+    printf("Thread %d is blocking\n", threadInfo->threadId);
+
+    if (threadInfo->state == BLOCKED) {
+        fprintf(stderr, "Thread %d was already blocked\n",
+                threadInfo->threadId);
+        return;
+    }
+
+    struct ProcessInfo* processInfo = processIdToInfo[threadInfo->processId];
+
+    if (threadInfo->state == RUNNING_EXCLUSIVE) {
+        if (*(processInfo->coreReleaseRequestCount) ==
+            processInfo->coreReleaseCount) {
+            // Cores should be given up voluntarily by calling setNumCores with
+            // a number of cores smaller than the process owns. Blocking the
+            // thread when not asked to causes races.
+            fprintf(stderr, "Thread %d should not be blocking\n",
+                    threadInfo->threadId);
+            return;
+        }
+
+        processInfo->coreReleaseCount++;
+        removeThreadFromCore(threadInfo);
+    }
+
+    threadInfo->state = BLOCKED;
+
+    if (processInfo->numCoresDesired > processInfo->numCoresOwned) {
+        grantCores();
+    }
 }
 
 void
-CoreArbiterServer::coresRequested()
+CoreArbiterServer::coresRequested(int connectingFd)
 {
+    core_t numCores;
+    if (!readData(connectingFd, &numCores, sizeof(core_t),
+                 "Error receiving number of cores requested")) {
+        return;
+    }
 
+    printf("%ld cores requested\n", numCores);
+    struct ThreadInfo* threadInfo = threadFdToInfo[connectingFd];
+    struct ProcessInfo* processInfo = processIdToInfo[threadInfo->processId];
+    core_t prevNumCoresDesired = processInfo->numCoresDesired;
+    processInfo->numCoresDesired = numCores;
+
+    if (processInfo->numCoresDesired > processInfo->numCoresOwned) {
+        if (prevNumCoresDesired <= processInfo->numCoresOwned) {
+            processesOwedCores.push_back(processInfo);
+        }
+        grantCores();
+    } else if (processInfo->numCoresDesired < processInfo->numCoresOwned) {
+        // The application is voluntarily giving up cores, so we need to give
+        // them permission to block threads.
+        *(processInfo->coreReleaseRequestCount) +=
+            processInfo->numCoresOwned - processInfo->numCoresDesired;
+
+        for (auto processIter = processesOwedCores.begin();
+             processIter != processesOwedCores.end(); processIter++) {
+            if (*processIter == processInfo) {
+                processesOwedCores.erase(processIter);
+                break;
+            }
+        }
+    }
 }
 
 void
@@ -359,8 +377,102 @@ CoreArbiterServer::timeoutCoreRetrieval()
 
 }
 
+void
+CoreArbiterServer::cleanupConnection(int connectingFd)
+{
+    sys->close(connectingFd);
+    ThreadInfo* thread = threadFdToInfo[connectingFd];
+    ProcessInfo* process = processIdToInfo[thread->processId];
+
+    // Remove this thread from the process's list of threads
+    for (auto threadIter = process->threads.begin();
+         threadIter != process->threads.end(); threadIter++) {
+        if (*threadIter == thread) {
+            process->threads.erase(threadIter);
+            break;
+        }
+    }
+
+    // Remove thread from map of threads
+    threadFdToInfo.erase(thread->threadId);
+
+    if (process->threads.empty()) {
+        // All of this process's threads have exited, so remove it
+        sys->close(process->sharedMemFd);
+        delete processIdToInfo[thread->processId];
+        processIdToInfo.erase(thread->processId);
+    }
+
+    delete thread;
+}
+
+void
+CoreArbiterServer::grantCores()
+{
+    if (processesOwedCores.empty()) {
+        printf("There are no processes in need of cores\n");
+        return;
+    }
+
+    for (size_t i = 0; i < exclusiveCores.size() && !processesOwedCores.empty();
+         i++) {
+        struct CoreInfo* core = &exclusiveCores[i];
+        if (core->exclusiveThreadId < 0) {
+            // This core is available
+            struct ProcessInfo* process = processesOwedCores.front();
+            assert(process->numCoresOwned < process->numCoresDesired);
+
+            for (struct ThreadInfo* thread : process->threads) {
+                if (thread->state == BLOCKED) {
+                    // This thread is blocked and belongs to a process who wants
+                    // more cores than it has
+                    printf("Granting core %lu to thread %d\n",
+                           core->coreId, thread->threadId);
+
+                    moveThreadToCore(thread, core);
+                    
+                    // Wake up the thread
+                    if (sys->send(thread->socket, &core->coreId,
+                                  sizeof(core_t), 0) < 0) {
+                        fprintf(stderr, "Error sending core ID to thread %d\n",
+                                thread->threadId);
+                        continue;
+                    }
+
+                    core->exclusiveThreadId = thread->threadId;
+                    thread->state = RUNNING_EXCLUSIVE;
+                    process->numCoresOwned++;
+                    if (process->numCoresOwned == process->numCoresDesired) {
+                        processesOwedCores.pop_front();
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+}
+
+bool
+CoreArbiterServer::readData(int fd, void* buf, size_t numBytes,
+                                        std::string err)
+{
+    ssize_t readBytes = sys->recv(fd, buf, numBytes, 0);
+    if (readBytes < 0) {
+        fprintf(stderr, "%s: %s\n", err.c_str(), strerror(errno));
+        return false;
+    } else if ((size_t)readBytes < numBytes) {
+        fprintf(stderr, "%s: expected %lu bytes but received %ld\n",
+                err.c_str(), numBytes, readBytes);
+        return false;
+    }
+
+    return true;
+}
+
 void CoreArbiterServer::createCpuset(std::string dirName, std::string cores,
-                                     std::string mems) {
+                                     std::string mems)
+{
     if (sys->mkdir(dirName.c_str(), 
                   S_IRUSR | S_IWUSR | S_IXUSR |
                   S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) < 0) {
@@ -390,7 +502,8 @@ void CoreArbiterServer::createCpuset(std::string dirName, std::string cores,
 }
 
 void CoreArbiterServer::moveProcsToCpuset(std::string fromPath,
-                                          std::string toPath) {
+                                          std::string toPath)
+{
     printf("Moving procs in %s to %s\n", fromPath.c_str(), toPath.c_str());
     std::ifstream fromFile(fromPath);
     if (!fromFile.is_open()) {
@@ -400,7 +513,7 @@ void CoreArbiterServer::moveProcsToCpuset(std::string fromPath,
 
     std::ofstream toFile(toPath);
     if (!toFile.is_open()) {
-        fprintf(stderr, "Unable top open %s\n", toPath.c_str());
+        fprintf(stderr, "Unable to open %s\n", toPath.c_str());
         exit(-1);
     }
 
@@ -424,13 +537,16 @@ void CoreArbiterServer::moveProcsToCpuset(std::string fromPath,
     toFile.close();
 }
 
-void CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath) {
+void
+CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
+{
     std::string procsDestFilename = cpusetPath + "/cgroup.procs";
     DIR* dir = sys->opendir(arbiterCpusetPath.c_str());
     if (!dir) {
+        // This is likely just because we don't have old cpusets to remove
         fprintf(stderr, "Error on opendir %s: %s\n",
                 arbiterCpusetPath.c_str(), strerror(errno));
-        exit(-1);
+        return;
     }
 
     // Iterate over all directories in the given path
@@ -466,4 +582,44 @@ void CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath) {
     }
 }
 
+void
+CoreArbiterServer::moveThreadToCore(struct ThreadInfo* thread,
+                                    struct CoreInfo* core)
+{
+    if (testingSkipCpusetAllocation) {
+        return;
+    }
+
+    core->cpusetFile.seekp(0);
+    core->cpusetFile << thread->threadId;
+    core->cpusetFile.flush();
+    if (core->cpusetFile.bad()) {
+        // TODO: handle this elegantly. It shouldn't happen, so I'm killing the
+        // server for now.
+        fprintf(stderr, "Unable to write %d to cpuset file for core %lu",
+                thread->threadId, core->coreId);
+        exit(-1);
+    }
 }
+
+void
+CoreArbiterServer::removeThreadFromCore(struct ThreadInfo* thread)
+{
+    if (testingSkipCpusetAllocation) {
+        return;
+    }
+
+    sharedCore.cpusetFile << thread->threadId;
+    sharedCore.cpusetFile.flush();
+    if (sharedCore.cpusetFile.bad()) {
+        // TODO: handle this elegantly. It shouldn't happen, so I'm killing the
+        // server for now.
+        fprintf(stderr, "Unable to write %d to cpuset file for core %lu",
+                thread->threadId, sharedCore.coreId);
+        exit(-1);
+    }
+}
+
+}
+
+

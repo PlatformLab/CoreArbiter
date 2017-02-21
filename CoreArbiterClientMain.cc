@@ -19,17 +19,20 @@
 #include "CoreArbiterClient.h"
 
 int main(int argc, const char** argv) {
-    CoreArbiter::CoreArbiterClient client("./testsocket");
+    CoreArbiter::CoreArbiterClient& client =
+        CoreArbiter::CoreArbiterClient::getInstance("./testsocket");
 
-    int numThreads = 1;
+    int numThreads = 2;
     std::vector<std::thread> threads(numThreads);
     for (int i = 0; i < numThreads; i++) {
         threads[i] = std::thread([&client] {
-            for (int j = 0; j < 2; j++) {
-                client.blockUntilCoreAvailable();
-            }
+            sleep(1);
+            client.blockUntilCoreAvailable();
+            printf("running on core %d\n", sched_getcpu());
         });
     }
+
+    client.setNumCores(2);
 
     for (auto& t : threads) {
       t.join();

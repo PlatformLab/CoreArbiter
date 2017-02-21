@@ -26,66 +26,19 @@
 namespace CoreArbiter {
 
 thread_local int CoreArbiterClient::serverSocket = -1;
-thread_local bool CoreArbiterClient::registeredAsThread = false;
+thread_local core_t CoreArbiterClient::coreId = -1;
 
 static Syscall defaultSyscall;
 Syscall* CoreArbiterClient::sys = &defaultSyscall;
 
 CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
-    : serverSocketPath(serverSocketPath)
+    : mutex()
+    , coreReleaseRequestCount(NULL)
+    , coreReleaseCount(0)
+    , ownedCoreCount(0)
+    , serverSocketPath(serverSocketPath)
     , sharedMemFd(-1)
 {
-    // Create pool of socket 
-    createNewServerConnection(serverSocketPath);
-
-    // Tell the server that we're a process
-    uint8_t process = PROCESS_CONN;
-    if (sys->send(serverSocket, &process, sizeof(uint8_t), 0) < 0) {
-        fprintf(stderr, "Send process flag failed: %s\n", strerror(errno));
-        return;
-    }
-
-    // Tell the server our process ID
-    pid_t processId = getpid();
-    if (sys->send(serverSocket, &processId, sizeof(pid_t), 0) < 0) {
-        fprintf(stderr, "Send process ID failed: %s\n", strerror(errno));
-        return;
-    }
-
-    // Read the shared memory path length from the server
-    size_t pathLen;
-    if (sys->recv(serverSocket, &pathLen, sizeof(size_t), 0) < 0) {
-        fprintf(stderr, "Receive shared memory path length failed: %s\n",
-                strerror(errno));
-        return;
-    }
-
-    // Read the shared memory path from the server
-    char sharedMemPath[pathLen];
-    if (sys->recv(serverSocket, sharedMemPath, pathLen, 0) < 0) {
-        fprintf(stderr, "Receive shared memory path failed: %s\n",
-                strerror(errno));
-        return;
-    }
-
-    // Open the shared memory
-    sharedMemFd = sys->open(sharedMemPath, O_RDONLY);
-    if (sharedMemFd < 0) {
-        fprintf(stderr, "Opening shared memory at path %s failed: %s\n",
-                sharedMemPath, strerror(errno));
-        return;
-    }
-    int pagesize = getpagesize();
-    coreReleaseRequestCount = (core_count_t*)sys->mmap(
-        NULL, pagesize, PROT_READ, MAP_SHARED, sharedMemFd, 0);
-    if (coreReleaseRequestCount == (core_count_t*)(-1)) {
-        fprintf(stderr, "mmap failed: %s\n", strerror(errno));
-        return;
-    }
-
-    printf("Successfully registered process %d with server. "
-           "We have %lu cores available\n",
-           processId, *coreReleaseRequestCount);
 }
 
 CoreArbiterClient::~CoreArbiterClient()
@@ -94,38 +47,84 @@ CoreArbiterClient::~CoreArbiterClient()
 }
 
 void
-CoreArbiterClient::setNumCores()
+CoreArbiterClient::setNumCores(core_t numCores)
 {
+    if (serverSocket < 0) {
+        // This thread has not yet registered with the server
+        createNewServerConnection();
+    }
 
+    uint8_t coreRequestMsg = CORE_REQUEST;
+    if (sys->send(serverSocket, &coreRequestMsg, sizeof(uint8_t), 0) < 0) {
+        std::string err = "Core request prefix send failed: " +
+                          std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
+    }
+
+    if (sys->send(serverSocket, &numCores, sizeof(core_t), 0) < 0) {
+        std::string err = "Core request send failed: " +
+                          std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
+    }
 }
 
-void
+bool
+CoreArbiterClient::shouldReleaseCore()
+{
+    Lock lock(mutex);
+    return *coreReleaseRequestCount - coreReleaseCount > 0;
+}
+
+core_t
 CoreArbiterClient::blockUntilCoreAvailable()
 {
-    if (!registeredAsThread) {
-        // This is the first time this thread is communicating with the server
-        // (not including process startup), so we need to set up a new
-        // connection 
-        registerThread();
+    if (serverSocket < 0) {
+        // This thread has not yet registered with the server
+        createNewServerConnection();
+    } else if (coreId >= 0) {
+        // This thread currently has exclusive access to a core. We need to
+        // check whether it should be blocking.
+        Lock lock(mutex);
+        if (*coreReleaseRequestCount - coreReleaseCount == 0) {
+            printf("Not blocking thread %d because its process has not been "
+                   "asked to give up a core\n", sys->gettid());
+            return coreId;
+        } else {
+            coreReleaseCount++;
+            ownedCoreCount--;
+        }
     }
 
     uint8_t threadBlockMsg = THREAD_BLOCK;
     if (sys->send(serverSocket, &threadBlockMsg, sizeof(uint8_t), 0) < 0) {
-        fprintf(stderr, "Block send failed: %s\n", strerror(errno));
-        return;
+        std::string err = "Block send failed: " + std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
     }
 
     printf("Thread %d is blocking until message received from server\n",
            sys->gettid());
+    coreId = -1;
+    readData(serverSocket, &coreId, sizeof(core_t),
+             "Error receiving core ID from server");
+    
+    printf("Thread %d woke up on core %lu.\n", sys->gettid(), coreId);
+    ownedCoreCount++;
 
-    uint8_t wakeupMsg;
-    sys->recv(serverSocket, &wakeupMsg, sizeof(uint8_t), 0);
+    return coreId;
+}
 
-    printf("woke up\n");
+core_t
+CoreArbiterClient::getOwnedCoreCount()
+{
+    Lock lock(mutex);
+    return ownedCoreCount;
 }
 
 void
-CoreArbiterClient::createNewServerConnection(std::string serverSocketPath)
+CoreArbiterClient::createNewServerConnection()
 {
     if (serverSocket != -1) {
         fprintf(stderr,
@@ -133,10 +132,13 @@ CoreArbiterClient::createNewServerConnection(std::string serverSocketPath)
         return;
     }
 
+    // Set up a socket
     serverSocket = sys->socket(AF_UNIX, SOCK_STREAM, 0);
     if (serverSocket < 0) {
-        fprintf(stderr, "Error creating socket: %s\n", strerror(errno));
-        return;
+        std::string err = "Error creating socket: " +
+                          std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
     }
 
     struct sockaddr_un remote;
@@ -146,43 +148,85 @@ CoreArbiterClient::createNewServerConnection(std::string serverSocketPath)
             sizeof(remote.sun_path) - 1);
     if (sys->connect(
             serverSocket, (struct sockaddr *)&remote, sizeof(remote)) < 0) {
-        fprintf(stderr, "Error connecting: %s\n", strerror(errno));
-        return;
-    }
-}
-
-void
-CoreArbiterClient::registerThread()
-{
-    if (serverSocket < 0) {
-        // We don't need to do this in the case where we are the same thread
-        // that registered our process
-        createNewServerConnection(serverSocketPath);
-    }
-
-    // Tell the server that we're a thread
-    uint8_t threadConnectMsg = THREAD_CONN;
-    if (sys->send(serverSocket, &threadConnectMsg, sizeof(uint8_t), 0) < 0) {
-        fprintf(stderr, "Send thread flag failed: %s\n", strerror(errno));
-        return;
+        std::string err = "Error connecting: " + std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
     }
 
     // Tell the server our process ID
     pid_t processId = sys->getpid();
     if (sys->send(serverSocket, &processId, sizeof(pid_t), 0) < 0) {
-        fprintf(stderr, "Send processId ID failed: %s\n", strerror(errno));
-        return;
+        std::string err = "Send process ID failed: " +
+                          std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
     }
 
     // Tell the server our thread ID
     pid_t threadId = sys->gettid();
     if (sys->send(serverSocket, &threadId, sizeof(pid_t), 0) < 0) {
-        fprintf(stderr, "Send thread ID failed: %s\n", strerror(errno));
-        return;
+        std::string err = "Send process ID failed: " +
+                          std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
     }
 
-    registeredAsThread = true;
-    printf("Registered thread %d with server.\n", threadId);
+    Lock lock(mutex);
+    if (coreReleaseRequestCount == NULL) {
+        // This is the first time this process is registering so we need to
+        // set up the shared memory page.
+
+        // Read the shared memory path length from the server
+        size_t pathLen;
+        readData(serverSocket, &pathLen, sizeof(size_t),
+                 "Error receiving shared memory path length");
+
+        // Read the shared memory path from the server
+        char sharedMemPath[pathLen];
+        readData(serverSocket, sharedMemPath, pathLen,
+                 "Error receiving shared memory path");
+
+        // Open the shared memory
+        sharedMemFd = sys->open(sharedMemPath, O_RDONLY);
+        if (sharedMemFd < 0) {
+            std::string err = "Opening shared memory at path " +
+                              std::string(sharedMemPath) + " failed" +
+                              std::string(strerror(errno));
+            fprintf(stderr, "%s\n", err.c_str());
+            throw ClientException(err);
+        }
+        int pagesize = getpagesize();
+        coreReleaseRequestCount = (core_t*)sys->mmap(
+            NULL, pagesize, PROT_READ, MAP_SHARED, sharedMemFd, 0);
+        if (coreReleaseRequestCount == (core_t*)(-1)) {
+            std::string err = "mmap failed: " + std::string(strerror(errno));
+            fprintf(stderr, "%s\n", err.c_str());
+            throw ClientException(err);
+        }
+    }
+
+    printf("Successfully registered process %d, thread %d with server.\n",
+           processId, threadId);
+}
+
+/**
+ * Throws ClientException on failure.
+ */
+void CoreArbiterClient::readData(int fd, void* buf, size_t numBytes,
+                                 std::string err)
+{
+    ssize_t readBytes = sys->recv(fd, buf, numBytes, 0);
+    if (readBytes < 0) {
+        std::string fullErrStr = err + ": " + std::string(strerror(errno));
+        fprintf(stderr, "%s\n", fullErrStr.c_str());
+        throw ClientException(fullErrStr);
+    } else if ((size_t)readBytes < numBytes) {
+        std::string fullErrStr = err + ": Expected " + std::to_string(numBytes)
+                                 + " bytes but received "
+                                 + std::to_string(readBytes);
+        fprintf(stderr, "%s\n", fullErrStr.c_str());
+        throw ClientException(fullErrStr);
+    }
 }
 
 }
