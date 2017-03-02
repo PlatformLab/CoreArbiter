@@ -31,6 +31,19 @@ thread_local core_t CoreArbiterClient::coreId = -1;
 static Syscall defaultSyscall;
 Syscall* CoreArbiterClient::sys = &defaultSyscall;
 
+bool CoreArbiterClient::testingSkipConnectionSetup = false;
+
+/**
+ * Private constructor because CoreArbiterClient is a singleton class. The
+ * constructor itself doesn't do anything except establish the path to the
+ * server. A connection with the server is established the first time a thread
+ * needs to communicate with it (i.e., calls setNumCores or shouldReleaseCore).
+ *
+ * The server is expected to be running before the client is initialized.
+ *
+ * \param serverSocketPath
+ *     The path to the socket that the server is listening for connections on.
+ */
 CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
     : mutex()
     , coreReleaseRequestCount(NULL)
@@ -43,12 +56,41 @@ CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
 
 CoreArbiterClient::~CoreArbiterClient()
 {
-
+    close(sharedMemFd);
 }
 
+/**
+ * Requests a specified number of cores at various priority levels from the
+ * server. The server expects NUM_PRIORITIES priority levels; a request
+ * specifying more or fewer levels is considered an error. For example, if the
+ * application wants 2 threads at priority 1 and 1 thread at priority 2 (with
+ * 0-indexed priorities), it should send:
+ *     0 2 1 0 0 0 0 0
+ * Lower indexes have higher priority. Priorities are on a per-process basis.
+ * One thread calling setNumCores will changed the desired number of cores for
+ * all threads in its process.
+ *
+ * This request for cores is handled asynchronously by the server. See
+ * blockUntilCoreAvailable() and getOwnedCoreCount() for how to actually place
+ * a thread on a core and check how many cores the process currently owns.
+ *
+ * Throws a ClientException on error.
+ *
+ * \param numCores
+ *     A vector specifying the number of cores requested at every priority
+ *     level. The vector must of NUM_PRIORITIES entries. Lower indexes have
+ *     higher priority.
+ */
 void
-CoreArbiterClient::setNumCores(core_t numCores)
+CoreArbiterClient::setNumCores(std::vector<core_t>& numCores)
 {
+    if (numCores.size() != NUM_PRIORITIES) {
+        std::string err = "Core request must have " +
+                          std::to_string(NUM_PRIORITIES) + " priorities\n";
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
+    }
+
     if (serverSocket < 0) {
         // This thread has not yet registered with the server
         createNewServerConnection();
@@ -62,7 +104,8 @@ CoreArbiterClient::setNumCores(core_t numCores)
         throw ClientException(err);
     }
 
-    if (sys->send(serverSocket, &numCores, sizeof(core_t), 0) < 0) {
+    if (sys->send(serverSocket, &numCores[0],
+                  sizeof(core_t) * NUM_PRIORITIES, 0) < 0) {
         std::string err = "Core request send failed: " +
                           std::string(strerror(errno));
         fprintf(stderr, "%s\n", err.c_str());
@@ -70,13 +113,36 @@ CoreArbiterClient::setNumCores(core_t numCores)
     }
 }
 
+/**
+ * Returns true if the server has requested that this process release a core
+ * (which it can do by calling blockUntilCoreAvailable() on a thread running
+ * exclusively on a core). This method should be called periodically. An
+ * uncooperative process will have its threads moved to an unmanaged core after
+ * RELEASE_TIMEOUT_MS milliseconds.
+ */
 bool
 CoreArbiterClient::shouldReleaseCore()
 {
     Lock lock(mutex);
+    if (!coreReleaseRequestCount) {
+        // This process hasn't established a connection with the server yet.
+        return false;
+    }
+
     return *coreReleaseRequestCount - coreReleaseCount > 0;
 }
 
+/**
+ * This method should be called by a thread that wants to run exclusively on a
+ * core. It blocks the thread and does not return until it has been placed on a
+ * core. In general it is safe to call blockUntilCoreAvailable() before
+ * setNumCores(), but if a process calls blockUntilCoreAvailable() on all of its
+ * threads it cannot get any work done, including calling setNumCores(). At most
+ * the number of threads specified by setNumCores() will be woken up from a call
+ * to blockUntilCoreAvailable().
+ *
+ * Throws a ClientException on error.
+ */
 core_t
 CoreArbiterClient::blockUntilCoreAvailable()
 {
@@ -116,6 +182,10 @@ CoreArbiterClient::blockUntilCoreAvailable()
     return coreId;
 }
 
+/**
+ * Returns the number of threads this process owns that are running exclusively
+ * on a core.
+ */
 core_t
 CoreArbiterClient::getOwnedCoreCount()
 {
@@ -123,12 +193,26 @@ CoreArbiterClient::getOwnedCoreCount()
     return ownedCoreCount;
 }
 
+// -- private methods
+
+/**
+ * Opens a new connection with the server for this thread. If this is the first
+ * time this process has communicated with the server, it will also set up the
+ * necessary per-process state.
+ *
+ * Throws a ClientException on error.
+ */
 void
 CoreArbiterClient::createNewServerConnection()
 {
     if (serverSocket != -1) {
         fprintf(stderr,
                 "This thread already has a connection to the server.\n");
+        return;
+    }
+
+    if (testingSkipConnectionSetup) {
+        serverSocket = 999; // To tell the test that this method was called
         return;
     }
 
@@ -210,12 +294,23 @@ CoreArbiterClient::createNewServerConnection()
 }
 
 /**
- * Throws ClientException on failure.
+ * Attempts to read numBytes from the provided socket connection into buf. If
+ * the read fails or does not read the expected amount of data, a
+ * ClientException is thrown with the provided error message.
+ *
+ * \param socket
+ *     The socket connection to read from
+ * \param buf
+ *     The buffer to write data to
+ * \param numBytes
+ *     The number of bytes to read
+ * \param err
+ *     An error string for if the read fails
  */
-void CoreArbiterClient::readData(int fd, void* buf, size_t numBytes,
+void CoreArbiterClient::readData(int socket, void* buf, size_t numBytes,
                                  std::string err)
 {
-    ssize_t readBytes = sys->recv(fd, buf, numBytes, 0);
+    ssize_t readBytes = sys->recv(socket, buf, numBytes, 0);
     if (readBytes < 0) {
         std::string fullErrStr = err + ": " + std::string(strerror(errno));
         fprintf(stderr, "%s\n", fullErrStr.c_str());

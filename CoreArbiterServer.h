@@ -41,21 +41,35 @@ class CoreArbiterServer {
     void startArbitration();
 
   private:
+    struct ThreadInfo;
+    struct ProcessInfo;
+    struct CoreInfo;
+
+    struct CoreInfo {
+        core_t coreId;
+        struct ThreadInfo* exclusiveThread;
+        std::ofstream cpusetFile;
+
+        CoreInfo()
+            : exclusiveThread(NULL)
+        {}
+    };
+
     enum ThreadState { RUNNING_EXCLUSIVE, RUNNING_SHARED, BLOCKED };
     struct ThreadInfo {
         pid_t threadId;
-        pid_t processId;
+        struct ProcessInfo* process;
         int socket;
-        core_t coreId;
+        struct CoreInfo* core;
         ThreadState state;
 
         ThreadInfo() {}
 
-        ThreadInfo(pid_t threadId, pid_t processId, int socket)
+        ThreadInfo(pid_t threadId, struct ProcessInfo* process, int socket)
             : threadId(threadId)
-            , processId(processId)
+            , process(process)
             , socket(socket)
-            , coreId(0)
+            , core(NULL)
             , state(RUNNING_SHARED)
         {}
     };
@@ -67,10 +81,13 @@ class CoreArbiterServer {
         core_t* coreReleaseRequestCount; // only ever incremented by server
         core_t coreReleaseCount;
 
-        core_t numCoresOwned;
-        core_t numCoresDesired;
+        core_t totalCoresOwned;
+        core_t totalCoresDesired;
+        std::vector<core_t> desiredCorePriorities;
 
-        std::vector<struct ThreadInfo*> threads;
+        // std::unordered_set<struct ThreadInfo*> threads;
+        std::unordered_map<ThreadState, std::unordered_set<struct ThreadInfo*>,
+                          std::hash<int>> threadStateToSet;
 
         ProcessInfo() {}
 
@@ -79,51 +96,46 @@ class CoreArbiterServer {
             , sharedMemFd(sharedMemFd)
             , coreReleaseRequestCount(coreReleaseRequestCount)
             , coreReleaseCount(0)
-            , numCoresOwned(0)
-            , numCoresDesired(0)
-        {}
-    };
-
-    struct CoreInfo {
-        core_t coreId;
-        pid_t exclusiveThreadId;
-        std::ofstream cpusetFile;
-
-        CoreInfo()
-            : coreId(0)
-            , exclusiveThreadId(-1)
+            , totalCoresOwned(0)
+            , totalCoresDesired(0)
+            , desiredCorePriorities(NUM_PRIORITIES)
         {}
     };
 
     void acceptConnection(int listenFd);
     void threadBlocking(int threadFd);
     void coresRequested(int connectingFd);
-    void timeoutCoreRetrieval();
+    void timeoutCoreRetrieval(int timerFd);
     void cleanupConnection(int connectingFd);
 
-    void grantCores();
+    void distributeCores();
     bool readData(int fd, void* buf, size_t numBytes, std::string err);
     void createCpuset(std::string dirName, std::string cores, std::string mems);
     void moveProcsToCpuset(std::string fromPath, std::string toPath);
     void removeOldCpusets(std::string arbiterCpusetPath);
-    void moveThreadToCore(struct ThreadInfo* thread, struct CoreInfo* core);
-    void removeThreadFromCore(struct ThreadInfo* thread);
+    void moveThreadToExclusiveCore(struct ThreadInfo* thread,
+                                   struct CoreInfo* core);
+    void removeThreadFromExclusiveCore(struct ThreadInfo* thread);
+    void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
     static std::string cpusetPath;
 
     std::string sharedMemPathPrefix;
     int epollFd;
     int listenFd;
+    std::unordered_map<int, struct ProcessInfo*> timerFdToProcess;
 
-    std::unordered_map<int, ThreadInfo*> threadFdToInfo;
-    std::unordered_map<pid_t, ProcessInfo*> processIdToInfo;
+    std::unordered_map<int, struct ThreadInfo*> threadFdToInfo;
+    std::unordered_map<pid_t, struct ProcessInfo*> processIdToInfo;
 
     std::vector<struct CoreInfo> exclusiveCores;
+    std::unordered_set<struct ThreadInfo*> exclusiveThreads;
     struct CoreInfo sharedCore;
 
-    // The front of the queue has the highest priority (for now, longest
-    // blocking) threads.
-    std::deque<struct ProcessInfo*> processesOwedCores;
+    // The smallest index in the vector is the highest priority and the first
+    // entry in the deque is the process that requested a core at that priority
+    // first
+    std::vector<std::deque<struct ProcessInfo*>> corePriorityQueues;
 
     static Syscall* sys;
     static bool testingSkipCpusetAllocation;

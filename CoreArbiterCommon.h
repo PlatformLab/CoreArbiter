@@ -19,6 +19,9 @@
 #include <cstddef>
 #include <stdint.h>
 
+#define NUM_PRIORITIES 8
+#define RELEASE_TIMEOUT_MS 100
+
 #define THREAD_BLOCK 1
 #define CORE_REQUEST 2
 

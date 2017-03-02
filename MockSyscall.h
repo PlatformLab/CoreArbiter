@@ -46,7 +46,7 @@ class MockSyscall : public Syscall {
                     mmapErrno(0), openErrno(0), opendirErrno(0), pipeErrno(0),
                     readdirErrno(0), recvErrno(0), recvEof(false),
                     recvfromErrno(0), recvfromEof(false), recvmmsgErrno(0),
-                    rmdirErrno(0), sendErrno(0), sendReturnCount(0),
+                    rmdirErrno(0), sendErrno(0), sendReturnCount(-1),
                     sendmsgErrno(0), sendmsgReturnCount(-1), sendtoErrno(0),
                     sendtoReturnCount(-1), setsockoptErrno(0), socketErrno(0),
                     writeErrno(0) {}

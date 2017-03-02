@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/timerfd.h>
 
 #include "CoreArbiterCommon.h"
 
@@ -231,6 +232,15 @@ class Syscall {
     virtual
     int stat(const char* path, struct stat* buf) {
         return ::stat(path, buf);
+    }
+    virtual
+    int timerfd_create(int clockid, int flags) {
+        return ::timerfd_create(clockid, flags);
+    }
+    virtual
+    int timerfd_settime(int fd, int flags, const struct itimerspec* newVal,
+                        struct itimerspec* oldVal) {
+        return ::timerfd_settime(fd, flags, newVal, oldVal);
     }
     virtual
     int unlink(const char* pathname) {

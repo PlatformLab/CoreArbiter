@@ -32,7 +32,9 @@ int main(int argc, const char** argv) {
         });
     }
 
-    client.setNumCores(2);
+    std::vector<core_t> coresRequested(NUM_PRIORITIES);
+    coresRequested[0] = 2;
+    client.setNumCores(coresRequested);
 
     for (auto& t : threads) {
       t.join();
