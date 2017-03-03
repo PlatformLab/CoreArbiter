@@ -1,9 +1,9 @@
-CCFLAGS=-Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer
+CCFLAGS=-Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -std=c++11
 CC = g++
 
 all: server client
 
-server: CoreArbiterServer.o CoreArbiterServerMain.o
+server: CoreArbiterServer.o CoreArbiterServerMain.o mkdir_p.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 client: CoreArbiterClient.o CoreArbiterClientMain.o
@@ -13,16 +13,19 @@ test: CoreArbiterServer.o
 	make -C tests
 
 CoreArbiterServerMain.o: CoreArbiterServerMain.cc
-	$(CC) $(CCFLAGS) -O3 -std=c++11 -c CoreArbiterServerMain.cc
+	$(CC) $(CCFLAGS) -O3 -c CoreArbiterServerMain.cc
 
 CoreArbiterServer.o: CoreArbiterServer.h CoreArbiterServer.cc CoreArbiterCommon.h
-	$(CC) $(CCFLAGS) -O3 -std=c++11 -c CoreArbiterServer.cc
+	$(CC) $(CCFLAGS) -O3 -c CoreArbiterServer.cc
 
 CoreArbiterClientMain.o: CoreArbiterClientMain.cc
-	$(CC) $(CCFLAGS) -O3 -std=c++11 -c CoreArbiterClientMain.cc
+	$(CC) $(CCFLAGS) -O3 -c CoreArbiterClientMain.cc
 
 CoreArbiterClient.o: CoreArbiterClient.h CoreArbiterClient.cc CoreArbiterCommon.h
-	$(CC) $(CCFLAGS) -O3 -std=c++11 -c CoreArbiterClient.cc
+	$(CC) $(CCFLAGS) -O3 -c CoreArbiterClient.cc
+
+%.o: %.cc
+	g++ $(CCFLAGS) -O3  $(LIBS) -fPIC -c -std=c++11 -o $@ $<
 
 clean:
 	rm -f *.o *.a server client

@@ -92,9 +92,11 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                 fprintf(stderr, "Unable to open %s\n", exclusiveTasksPath.c_str());
                 exit(-1);
             }
-            
         }
     }
+
+    ensureParents(socketPath.c_str(), 0777);
+    ensureParents(sharedMemPathPrefix.c_str(), 0777);
 
     // Set up unix domain socket
     listenFd = sys->socket(AF_UNIX, SOCK_STREAM, 0);

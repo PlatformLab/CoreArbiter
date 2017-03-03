@@ -20,7 +20,7 @@
 
 int main(int argc, const char** argv) {
     CoreArbiter::CoreArbiterClient& client =
-        CoreArbiter::CoreArbiterClient::getInstance("./testsocket");
+        CoreArbiter::CoreArbiterClient::getInstance("/tmp/CoreArbiter/testsocket");
 
     int numThreads = 2;
     std::vector<std::thread> threads(numThreads);

@@ -19,8 +19,8 @@ int main() {
     std::vector<core_t> cores;
     cores.push_back(1);
     cores.push_back(2);
-    CoreArbiter::CoreArbiterServer server("./testsocket",
-                                          "./testmem",
+    CoreArbiter::CoreArbiterServer server("/tmp/CoreArbiter/testsocket",
+                                          "/tmp/CoreArbiter/testmem",
                                           cores);
     server.startArbitration();
     return 0;

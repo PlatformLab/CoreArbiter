@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <sys/epoll.h>
+#include <sys/stat.h>
 #include <stdexcept>
 #include <vector>
 
@@ -143,5 +144,6 @@ class CoreArbiterServer {
 
 }
 
+int ensureParents(const char *path, mode_t mode = S_IRWXU);
 
 #endif // CORE_ARBITER_SERVER_H_
