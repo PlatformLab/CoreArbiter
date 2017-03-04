@@ -6,8 +6,11 @@ all: server client
 server: CoreArbiterServer.o CoreArbiterServerMain.o mkdir_p.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
-client: CoreArbiterClient.o CoreArbiterClientMain.o
-	$(CC) $(LDFLAGS) -pthread -o $@ $^
+client:  CoreArbiterClientMain.o libCoreArbiter.a
+	$(CC) $(LDFLAGS) -pthread -o $@ $< -L. -lCoreArbiter
+
+libCoreArbiter.a: CoreArbiterClient.o
+	ar rcs $@ $^	
 
 test: CoreArbiterServer.o
 	make -C tests
@@ -22,7 +25,7 @@ CoreArbiterClientMain.o: CoreArbiterClientMain.cc
 	$(CC) $(CCFLAGS) -O3 -c CoreArbiterClientMain.cc
 
 CoreArbiterClient.o: CoreArbiterClient.h CoreArbiterClient.cc CoreArbiterCommon.h
-	$(CC) $(CCFLAGS) -O3 -c CoreArbiterClient.cc
+	$(CC) $(CCFLAGS) -fPIC  -O3 -c CoreArbiterClient.cc
 
 %.o: %.cc
 	g++ $(CCFLAGS) -O3  $(LIBS) -fPIC -c -std=c++11 -o $@ $<
