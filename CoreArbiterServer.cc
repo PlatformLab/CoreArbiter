@@ -445,17 +445,34 @@ CoreArbiterServer::cleanupConnection(int connectingFd)
     sys->close(connectingFd);
     ThreadInfo* thread = threadFdToInfo[connectingFd];
     ProcessInfo* process = thread->process;
-    // process->threads.erase(thread);
     process->threadStateToSet[thread->state].erase(thread);
 
     // Remove thread from map of threads
     threadFdToInfo.erase(thread->socket);
 
-    // if (process->threads.empty()) {
+    if (thread->state == RUNNING_EXCLUSIVE) {
+        exclusiveThreads.erase(thread);
+        thread->core->exclusiveThread = NULL;
+    }
+
     if (process->threadStateToSet.empty()) {
-        // All of this process's threads have exited, so remove it
+        printf("All of process %d's threads have exited. Removing all "
+               "process records\n", process->id);
         sys->close(process->sharedMemFd);
         processIdToInfo.erase(process->id);
+
+        // Remove this process from the core priority queue
+        for (size_t i = 0; i < NUM_PRIORITIES; i++) {
+            std::deque<struct ProcessInfo*>& queue = corePriorityQueues[i];
+            for (auto processIter = queue.begin(); processIter != queue.end();
+                 processIter++) {
+                if (*processIter == process) {
+                    queue.erase(processIter);
+                    break;
+                }
+            }
+        }
+
         delete process;
     }
 
@@ -465,6 +482,8 @@ CoreArbiterServer::cleanupConnection(int connectingFd)
 void
 CoreArbiterServer::distributeCores()
 {
+    printf("Distributing cores among threads...\n");
+
     // First, build the set of threads that should receive cores
     std::deque<struct ThreadInfo*> threadsToReceiveCores;
 
