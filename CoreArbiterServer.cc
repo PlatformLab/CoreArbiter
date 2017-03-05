@@ -340,15 +340,14 @@ CoreArbiterServer::threadBlocking(int threadFd)
             return;
         }
 
+        printf("Removing thread %d from core %lu\n", thread->threadId, thread->core->coreId);
         process->coreReleaseCount++;
+        process->totalCoresOwned--;
         removeThreadFromExclusiveCore(thread);
     }
 
     changeThreadState(thread, BLOCKED);
-
-    if (process->totalCoresDesired > process->totalCoresOwned) {
-        distributeCores();
-    }
+    distributeCores();
 }
 
 void
@@ -583,9 +582,9 @@ CoreArbiterServer::distributeCores()
             // assigned to a new thread (one of the ones at the end of
             // threadsToReceiveCores) when the currently running thread blocks
             // or is demoted in timeoutCoreRetrieval
-            printf("Starting preemption of thread belonging to process %lu on "
-                   "core ", core->coreId);
             struct ProcessInfo* process = core->exclusiveThread->process;
+            printf("Starting preemption of thread belonging to process %d on "
+                   "core %lu\n", process->id, core->coreId);
             
             // Tell the process that it needs to release a core
             *(process->coreReleaseRequestCount) += 1;
@@ -799,8 +798,9 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
         }
     }
 
+    thread->core->exclusiveThread = NULL;
     thread->core = NULL;
-    thread->state = RUNNING_SHARED;
+    changeThreadState(thread, RUNNING_SHARED);
     exclusiveThreads.erase(thread);
 }
 
