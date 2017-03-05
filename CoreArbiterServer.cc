@@ -48,9 +48,9 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         std::string arbiterCpusetPath = cpusetPath + "/CoreArbiter";
         removeOldCpusets(arbiterCpusetPath);
 
-        // Create a new cpuset directory for core arbitration. Since this is going
-        // to be a parent of all the arbiter's individual core cpusets, it needs to
-        // include every core.
+        // Create a new cpuset directory for core arbitration. Since this is
+        // going to be a parent of all the arbiter's individual core cpusets, it
+        // needs to include every core.
         unsigned numCores = std::thread::hardware_concurrency();
         std::string allCores = "0-" + std::to_string(numCores - 1);
         createCpuset(arbiterCpusetPath, allCores, "0");
@@ -61,7 +61,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             createCpuset(exclusiveCpusetPath, std::to_string(core), "0");
         }
 
-        // Set up cpuset for all other processes. For now, core 0 is always shared.
+        // Set up cpuset for all other processes. For now, core 0 is always
+        // shared.
         std::string sharedCpusetPath = arbiterCpusetPath + "/Shared";
         createCpuset(sharedCpusetPath, "0", "0");
 
@@ -89,7 +90,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             coreInfo->coreId = coreId;
             coreInfo->cpusetFile.open(exclusiveTasksPath);
             if (!coreInfo->cpusetFile.is_open()) {
-                fprintf(stderr, "Unable to open %s\n", exclusiveTasksPath.c_str());
+                fprintf(stderr, "Unable to open %s\n",
+                        exclusiveTasksPath.c_str());
                 exit(-1);
             }
         }
@@ -340,7 +342,8 @@ CoreArbiterServer::threadBlocking(int threadFd)
             return;
         }
 
-        printf("Removing thread %d from core %lu\n", thread->threadId, thread->core->coreId);
+        printf("Removing thread %d from core %lu\n",
+               thread->threadId, thread->core->coreId);
         process->coreReleaseCount++;
         process->totalCoresOwned--;
         removeThreadFromExclusiveCore(thread);
