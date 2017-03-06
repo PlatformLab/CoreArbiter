@@ -209,6 +209,9 @@ CoreArbiterServer::startArbitration()
                     case CORE_REQUEST:
                         coresRequested(connectingFd);
                         break;
+                    case COUNT_BLOCKED_THREADS:
+                        countBlockedThreads(connectingFd);
+                        break;
                     default:
                         fprintf(stderr, "Unknown message type: %u\n", msgType);
                         break;
@@ -411,6 +414,27 @@ CoreArbiterServer::coresRequested(int connectingFd)
         // Even if the total number of cores this process wants is the same, we
         // may need to shuffle cores around because of priority changes.
         distributeCores();
+    }
+}
+
+void
+CoreArbiterServer::countBlockedThreads(int connectingFd)
+{
+    if (threadFdToInfo.find(connectingFd) == threadFdToInfo.end()) {
+        fprintf(stderr,
+                "Unknown connection is asking for blocked thread count\n");
+        return;
+    }
+
+    struct ProcessInfo* process = threadFdToInfo[connectingFd]->process;
+    size_t numBlockedThreads = process->threadStateToSet[BLOCKED].size();
+    printf("Process %d has requested its number of blocked threads (%lu)\n",
+           process->id, numBlockedThreads);
+
+    if (sys->send(connectingFd, &numBlockedThreads, sizeof(size_t), 0) < 0) {
+        fprintf(stderr, "Error sending number of blocked threads: %s\n",
+                strerror(errno));
+        return;
     }
 }
 

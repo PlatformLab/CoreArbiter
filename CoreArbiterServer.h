@@ -106,6 +106,7 @@ class CoreArbiterServer {
     void acceptConnection(int listenFd);
     void threadBlocking(int threadFd);
     void coresRequested(int connectingFd);
+    void countBlockedThreads(int connectingFd);
     void timeoutCoreRetrieval(int timerFd);
     void cleanupConnection(int connectingFd);
 

@@ -193,6 +193,36 @@ CoreArbiterClient::getOwnedCoreCount()
     return ownedCoreCount;
 }
 
+/**
+ * Returns the number of threads belonging to this process that are currently
+ * blocked waiting on a core.
+ */
+size_t
+CoreArbiterClient::getNumBlockedThreads()
+{
+    if (serverSocket < 0) {
+        createNewServerConnection();
+    }
+
+    printf("Polling the server for the number of blocked threads\n");
+    uint8_t countBlockedThreadsMsg = COUNT_BLOCKED_THREADS;
+    if (sys->send(
+            serverSocket, &countBlockedThreadsMsg, sizeof(uint8_t), 0) < 0) {
+        std::string err = "Count blocked threads send failed " +
+                          std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
+    }
+
+    size_t numCoresBlocked;
+    readData(serverSocket, &numCoresBlocked, sizeof(size_t),
+             "Error receiving number of blocked cores from server");
+
+    printf("Server replied that there are %lu blocked threads\n",
+           numCoresBlocked);
+    return numCoresBlocked;
+}
+
 // -- private methods
 
 /**

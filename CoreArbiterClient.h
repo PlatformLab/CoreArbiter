@@ -55,6 +55,7 @@ class CoreArbiterClient {
     bool shouldReleaseCore();
     core_t blockUntilCoreAvailable();
     core_t getOwnedCoreCount();
+    size_t getNumBlockedThreads();
 
     class ClientException: public std::runtime_error {
       public:
