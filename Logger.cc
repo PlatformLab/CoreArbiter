@@ -29,7 +29,11 @@ void Logger::log(LogLevel level, const char* fmt, ...)
     Lock lock(mutex);
     va_list args;
     va_start(args, fmt);
-    vprintf(fmt, args);
+    if (level == ERROR) {
+        vfprintf(stderr, fmt, args);
+    } else {
+        vprintf(fmt, args);
+    }
     va_end(args);
 }
 
