@@ -3,11 +3,11 @@ CC = g++
 
 all: server client
 
-server: CoreArbiterServer.o CoreArbiterServerMain.o mkdir_p.o
+server: CoreArbiterServer.o CoreArbiterServerMain.o mkdir_p.o Logger.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
-client:  CoreArbiterClientMain.o libCoreArbiter.a
-	$(CC) $(LDFLAGS) -pthread -o $@ $< -L. -lCoreArbiter
+client:  CoreArbiterClientMain.o libCoreArbiter.a Logger.o
+	$(CC) $(LDFLAGS) -pthread -o $@ $^
 
 libCoreArbiter.a: CoreArbiterClient.o
 	ar rcs $@ $^	
@@ -26,6 +26,9 @@ CoreArbiterClientMain.o: CoreArbiterClientMain.cc
 
 CoreArbiterClient.o: CoreArbiterClient.h CoreArbiterClient.cc CoreArbiterCommon.h
 	$(CC) $(CCFLAGS) -fPIC  -O3 -c CoreArbiterClient.cc
+
+Logger.o: Logger.h Logger.cc
+	$(CC) $(CCFLAGS) -O3 -c Logger.cc
 
 %.o: %.cc
 	g++ $(CCFLAGS) -O3  $(LIBS) -fPIC -c -std=c++11 -o $@ $<

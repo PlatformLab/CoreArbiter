@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 
 #include "CoreArbiterClient.h"
+#include "Logger.h"
 
 namespace CoreArbiter {
 
@@ -87,7 +88,7 @@ CoreArbiterClient::setNumCores(std::vector<core_t>& numCores)
     if (numCores.size() != NUM_PRIORITIES) {
         std::string err = "Core request must have " +
                           std::to_string(NUM_PRIORITIES) + " priorities\n";
-        fprintf(stderr, "%s\n", err.c_str());
+        LOG(ERROR, "%s\n", err.c_str());
         throw ClientException(err);
     }
 
@@ -145,8 +146,8 @@ CoreArbiterClient::blockUntilCoreAvailable()
         // check whether it should be blocking.
         Lock lock(mutex);
         if (*coreReleaseRequestCount - coreReleaseCount == 0) {
-            printf("Not blocking thread %d because its process has not been "
-                   "asked to give up a core\n", sys->gettid());
+            LOG(WARNING, "Not blocking thread %d because its process has not "
+                "been asked to give up a core\n", sys->gettid());
             return coreId;
         } else {
             coreReleaseCount++;
@@ -158,13 +159,13 @@ CoreArbiterClient::blockUntilCoreAvailable()
     sendData(serverSocket, &threadBlockMsg, sizeof(uint8_t),
              "Error sending block message");
 
-    printf("Thread %d is blocking until message received from server\n",
-           sys->gettid());
+    LOG(NOTICE, "Thread %d is blocking until message received from server\n",
+        sys->gettid());
     coreId = -1;
     readData(serverSocket, &coreId, sizeof(core_t),
              "Error receiving core ID from server");
     
-    printf("Thread %d woke up on core %lu.\n", sys->gettid(), coreId);
+    LOG(NOTICE, "Thread %d woke up on core %lu.\n", sys->gettid(), coreId);
     ownedCoreCount++;
 
     return coreId;
@@ -192,7 +193,7 @@ CoreArbiterClient::getNumBlockedThreads()
         createNewServerConnection();
     }
 
-    printf("Polling the server for the number of blocked threads\n");
+    LOG(DEBUG, "Polling the server for the number of blocked threads\n");
     uint8_t countBlockedThreadsMsg = COUNT_BLOCKED_THREADS;
     sendData(serverSocket, &countBlockedThreadsMsg, sizeof(uint8_t),
              "Error sending count blocked threads request");
@@ -201,8 +202,8 @@ CoreArbiterClient::getNumBlockedThreads()
     readData(serverSocket, &numCoresBlocked, sizeof(size_t),
              "Error receiving number of blocked cores from server");
 
-    printf("Server replied that there are %lu blocked threads\n",
-           numCoresBlocked);
+    LOG(NOTICE, "Server replied that there are %lu blocked threads\n",
+        numCoresBlocked);
     return numCoresBlocked;
 }
 
@@ -219,8 +220,7 @@ void
 CoreArbiterClient::createNewServerConnection()
 {
     if (serverSocket != -1) {
-        fprintf(stderr,
-                "This thread already has a connection to the server.\n");
+        LOG(WARNING, "This thread already has a connection to the server.\n");
         return;
     }
 
@@ -234,7 +234,7 @@ CoreArbiterClient::createNewServerConnection()
     if (serverSocket < 0) {
         std::string err = "Error creating socket: " +
                           std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
+        LOG(ERROR, "%s\n", err.c_str());
         throw ClientException(err);
     }
 
@@ -246,7 +246,7 @@ CoreArbiterClient::createNewServerConnection()
     if (sys->connect(
             serverSocket, (struct sockaddr *)&remote, sizeof(remote)) < 0) {
         std::string err = "Error connecting: " + std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
+        LOG(ERROR, "%s\n", err.c_str());
         throw ClientException(err);
     }
 
@@ -281,7 +281,7 @@ CoreArbiterClient::createNewServerConnection()
             std::string err = "Opening shared memory at path " +
                               std::string(sharedMemPath) + " failed" +
                               std::string(strerror(errno));
-            fprintf(stderr, "%s\n", err.c_str());
+            LOG(ERROR, "%s\n", err.c_str());
             throw ClientException(err);
         }
         int pagesize = getpagesize();
@@ -289,13 +289,13 @@ CoreArbiterClient::createNewServerConnection()
             NULL, pagesize, PROT_READ, MAP_SHARED, sharedMemFd, 0);
         if (coreReleaseRequestCount == (core_t*)(-1)) {
             std::string err = "mmap failed: " + std::string(strerror(errno));
-            fprintf(stderr, "%s\n", err.c_str());
+            LOG(ERROR, "%s\n", err.c_str());
             throw ClientException(err);
         }
     }
 
-    printf("Successfully registered process %d, thread %d with server.\n",
-           processId, threadId);
+    LOG(NOTICE, "Successfully registered process %d, thread %d with server.\n",
+        processId, threadId);
 }
 
 /**
@@ -318,13 +318,13 @@ void CoreArbiterClient::readData(int socket, void* buf, size_t numBytes,
     ssize_t readBytes = sys->recv(socket, buf, numBytes, 0);
     if (readBytes < 0) {
         std::string fullErrStr = err + ": " + std::string(strerror(errno));
-        fprintf(stderr, "%s\n", fullErrStr.c_str());
+        LOG(ERROR, "%s\n", fullErrStr.c_str());
         throw ClientException(fullErrStr);
     } else if ((size_t)readBytes < numBytes) {
         std::string fullErrStr = err + ": Expected " + std::to_string(numBytes)
                                  + " bytes but received "
                                  + std::to_string(readBytes);
-        fprintf(stderr, "%s\n", fullErrStr.c_str());
+        LOG(ERROR, "%s\n", fullErrStr.c_str());
         throw ClientException(fullErrStr);
     }
 }
@@ -347,7 +347,7 @@ void CoreArbiterClient::sendData(int socket, void* buf, size_t numBytes,
                                  std::string err) {
     if (sys->send(socket, buf, numBytes, 0) < 0) {
         std::string err = err + ": " + std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
+        LOG(ERROR, "%s\n", err.c_str());
         throw ClientException(err);
     }
 }
