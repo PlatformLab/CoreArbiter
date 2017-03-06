@@ -24,6 +24,7 @@
 
 #define THREAD_BLOCK 1
 #define CORE_REQUEST 2
+#define COUNT_BLOCKED_THREADS 3
 
 typedef ssize_t core_t;
 
