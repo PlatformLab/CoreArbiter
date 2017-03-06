@@ -97,20 +97,11 @@ CoreArbiterClient::setNumCores(std::vector<core_t>& numCores)
     }
 
     uint8_t coreRequestMsg = CORE_REQUEST;
-    if (sys->send(serverSocket, &coreRequestMsg, sizeof(uint8_t), 0) < 0) {
-        std::string err = "Core request prefix send failed: " +
-                          std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
-        throw ClientException(err);
-    }
+    sendData(serverSocket, &coreRequestMsg, sizeof(uint8_t),
+             "Error sending core request prefix");
 
-    if (sys->send(serverSocket, &numCores[0],
-                  sizeof(core_t) * NUM_PRIORITIES, 0) < 0) {
-        std::string err = "Core request send failed: " +
-                          std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
-        throw ClientException(err);
-    }
+    sendData(serverSocket, &numCores[0], sizeof(core_t) * NUM_PRIORITIES,
+             "Error sending core request priorities");
 }
 
 /**
@@ -164,11 +155,8 @@ CoreArbiterClient::blockUntilCoreAvailable()
     }
 
     uint8_t threadBlockMsg = THREAD_BLOCK;
-    if (sys->send(serverSocket, &threadBlockMsg, sizeof(uint8_t), 0) < 0) {
-        std::string err = "Block send failed: " + std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
-        throw ClientException(err);
-    }
+    sendData(serverSocket, &threadBlockMsg, sizeof(uint8_t),
+             "Error sending block message");
 
     printf("Thread %d is blocking until message received from server\n",
            sys->gettid());
@@ -206,13 +194,8 @@ CoreArbiterClient::getNumBlockedThreads()
 
     printf("Polling the server for the number of blocked threads\n");
     uint8_t countBlockedThreadsMsg = COUNT_BLOCKED_THREADS;
-    if (sys->send(
-            serverSocket, &countBlockedThreadsMsg, sizeof(uint8_t), 0) < 0) {
-        std::string err = "Count blocked threads send failed " +
-                          std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
-        throw ClientException(err);
-    }
+    sendData(serverSocket, &countBlockedThreadsMsg, sizeof(uint8_t),
+             "Error sending count blocked threads request");
 
     size_t numCoresBlocked;
     readData(serverSocket, &numCoresBlocked, sizeof(size_t),
@@ -269,21 +252,13 @@ CoreArbiterClient::createNewServerConnection()
 
     // Tell the server our process ID
     pid_t processId = sys->getpid();
-    if (sys->send(serverSocket, &processId, sizeof(pid_t), 0) < 0) {
-        std::string err = "Send process ID failed: " +
-                          std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
-        throw ClientException(err);
-    }
+    sendData(serverSocket, &processId, sizeof(pid_t),
+             "Error sending process ID");
 
     // Tell the server our thread ID
     pid_t threadId = sys->gettid();
-    if (sys->send(serverSocket, &threadId, sizeof(pid_t), 0) < 0) {
-        std::string err = "Send process ID failed: " +
-                          std::string(strerror(errno));
-        fprintf(stderr, "%s\n", err.c_str());
-        throw ClientException(err);
-    }
+    sendData(serverSocket, &threadId, sizeof(pid_t),
+             "Error sending thread ID");
 
     Lock lock(mutex);
     if (coreReleaseRequestCount == NULL) {
@@ -351,6 +326,29 @@ void CoreArbiterClient::readData(int socket, void* buf, size_t numBytes,
                                  + std::to_string(readBytes);
         fprintf(stderr, "%s\n", fullErrStr.c_str());
         throw ClientException(fullErrStr);
+    }
+}
+
+/**
+ * Attempts to send numBytes data of the provided buffer to the provided socket.
+ * If the send fails, a ClientException is thrown with the provided error
+ * message.
+ *
+ * \param socket
+ *     The socket connection to write to
+ * \param buf
+ *     The buffer to read data from
+ * \param numBytes
+ *     The number of bytes to write
+ * \param err
+ *     An error string for if the send fails
+ */
+void CoreArbiterClient::sendData(int socket, void* buf, size_t numBytes,
+                                 std::string err) {
+    if (sys->send(socket, buf, numBytes, 0) < 0) {
+        std::string err = err + ": " + std::string(strerror(errno));
+        fprintf(stderr, "%s\n", err.c_str());
+        throw ClientException(err);
     }
 }
 

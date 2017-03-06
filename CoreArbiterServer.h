@@ -103,15 +103,16 @@ class CoreArbiterServer {
         {}
     };
 
-    void acceptConnection(int listenFd);
-    void threadBlocking(int threadFd);
-    void coresRequested(int connectingFd);
-    void countBlockedThreads(int connectingFd);
+    void acceptConnection(int listenSocket);
+    void threadBlocking(int socket);
+    void coresRequested(int socket);
+    void countBlockedThreads(int socket);
     void timeoutCoreRetrieval(int timerFd);
-    void cleanupConnection(int connectingFd);
+    void cleanupConnection(int socket);
 
     void distributeCores();
-    bool readData(int fd, void* buf, size_t numBytes, std::string err);
+    bool readData(int socket, void* buf, size_t numBytes, std::string err);
+    bool sendData(int socket, void* buf, size_t numBytes, std::string err);
     void createCpuset(std::string dirName, std::string cores, std::string mems);
     void moveProcsToCpuset(std::string fromPath, std::string toPath);
     void removeOldCpusets(std::string arbiterCpusetPath);
@@ -124,10 +125,10 @@ class CoreArbiterServer {
 
     std::string sharedMemPathPrefix;
     int epollFd;
-    int listenFd;
+    int listenSocket;
     std::unordered_map<int, struct ProcessInfo*> timerFdToProcess;
 
-    std::unordered_map<int, struct ThreadInfo*> threadFdToInfo;
+    std::unordered_map<int, struct ThreadInfo*> threadSocketToInfo;
     std::unordered_map<pid_t, struct ProcessInfo*> processIdToInfo;
 
     std::vector<struct CoreInfo> exclusiveCores;

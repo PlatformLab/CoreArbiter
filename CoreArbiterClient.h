@@ -68,7 +68,8 @@ class CoreArbiterClient {
 
     void createNewServerConnection();
     void registerThread();
-    void readData(int fd, void* buf, size_t numBytes, std::string err);
+    void readData(int socket, void* buf, size_t numBytes, std::string err);
+    void sendData(int socket, void* buf, size_t numBytes, std::string err);
 
     typedef std::unique_lock<std::mutex> Lock;
 

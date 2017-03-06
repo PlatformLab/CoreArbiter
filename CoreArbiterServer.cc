@@ -34,7 +34,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::vector<core_t> exclusiveCoreIds)
     : sharedMemPathPrefix(sharedMemPathPrefix)
     , epollFd(-1)
-    , listenFd(-1)
+    , listenSocket(-1)
     , exclusiveCores(exclusiveCoreIds.size())
     , corePriorityQueues(NUM_PRIORITIES)
 {
@@ -101,8 +101,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     ensureParents(sharedMemPathPrefix.c_str(), 0777);
 
     // Set up unix domain socket
-    listenFd = sys->socket(AF_UNIX, SOCK_STREAM, 0);
-    if (listenFd < 0) {
+    listenSocket = sys->socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listenSocket < 0) {
         fprintf(stderr, "Error creating listen socket: %s\n", strerror(errno));
         exit(-1);
     }
@@ -115,21 +115,21 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     // This will fail if the socket doesn't already exist. Ignore the error.
     sys->unlink(addr.sun_path);
 
-    if (sys->bind(listenFd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(listenFd);
+    if (sys->bind(listenSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(listenSocket);
         fprintf(stderr, "Error binding listen socket: %s\n", strerror(errno));
         exit(-1);
     }
 
-    if (sys->listen(listenFd, 10) < 0) { // TODO: backlog size?
-        close(listenFd);
+    if (sys->listen(listenSocket, 10) < 0) { // TODO: backlog size?
+        close(listenSocket);
         fprintf(stderr, "Error listening: %s\n", strerror(errno));
         exit(-1);
     }
 
     // Our clients are not necessarily root
     if (sys->chmod(addr.sun_path, 0777) < 0) {
-        close(listenFd);
+        close(listenSocket);
         fprintf(stderr, "Error on chmod for %s: %s\n",
                 addr.sun_path, strerror(errno));
         exit(-1);
@@ -138,18 +138,19 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     // Set up epoll
     epollFd = sys->epoll_create(MAX_EPOLL_EVENTS);
     if (epollFd < 0) {
-        close(listenFd);
+        close(listenSocket);
         fprintf(stderr, "Error on epoll_create: %s\n", strerror(errno));
         exit(-1);
     }
 
     struct epoll_event listenEvent;
     listenEvent.events = EPOLLIN | EPOLLRDHUP;
-    listenEvent.data.fd = listenFd;
-    if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, listenFd, &listenEvent) < 0) {
-        sys->close(listenFd);
-        fprintf(stderr, "Error adding listenFd %d to epoll: %s\n",
-                listenFd, strerror(errno));
+    listenEvent.data.fd = listenSocket;
+    if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, listenSocket,
+                       &listenEvent) < 0) {
+        sys->close(listenSocket);
+        fprintf(stderr, "Error adding listenSocket %d to epoll: %s\n",
+                listenSocket, strerror(errno));
         exit(-1);
     }
 }
@@ -172,23 +173,23 @@ CoreArbiterServer::startArbitration()
         }
 
         for (int i = 0; i < numFds; i++) {
-            int connectingFd = events[i].data.fd;
+            int socket = events[i].data.fd;
 
             if (events[i].events & EPOLLRDHUP) {
                 // A thread exited or otherwise closed its connection
-                printf("detected closed connection for fd %d\n", connectingFd);
+                printf("detected closed connection for fd %d\n", socket);
                 sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
-                               connectingFd, &events[i]);
-                cleanupConnection(connectingFd);
-            } else if (connectingFd == listenFd) {
+                               socket, &events[i]);
+                cleanupConnection(socket);
+            } else if (socket == listenSocket) {
                 // A new thread is connecting
-                acceptConnection(listenFd);
-            } else if (timerFdToProcess.find(connectingFd)
+                acceptConnection(listenSocket);
+            } else if (timerFdToProcess.find(socket)
                         != timerFdToProcess.end()) {
                 // Core retrieval timer timeout
-                timeoutCoreRetrieval(connectingFd);
+                timeoutCoreRetrieval(socket);
                 sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
-                               connectingFd, &events[i]);
+                               socket, &events[i]);
             } else {
                 // Thread is making some sort of request
                 if (!(events[i].events & EPOLLIN)) {
@@ -197,20 +198,20 @@ CoreArbiterServer::startArbitration()
                 }
 
                 uint8_t msgType;
-                if (!readData(connectingFd, &msgType, sizeof(uint8_t),
+                if (!readData(socket, &msgType, sizeof(uint8_t),
                              "Error reading message type")) {
                     continue;
                 }
 
                 switch(msgType) {
                     case THREAD_BLOCK:
-                        threadBlocking(connectingFd);
+                        threadBlocking(socket);
                         break;
                     case CORE_REQUEST:
-                        coresRequested(connectingFd);
+                        coresRequested(socket);
                         break;
                     case COUNT_BLOCKED_THREADS:
-                        countBlockedThreads(connectingFd);
+                        countBlockedThreads(socket);
                         break;
                     default:
                         fprintf(stderr, "Unknown message type: %u\n", msgType);
@@ -223,14 +224,14 @@ CoreArbiterServer::startArbitration()
 }
 
 void
-CoreArbiterServer::acceptConnection(int listenFd)
+CoreArbiterServer::acceptConnection(int listenSocket)
 {
     struct sockaddr_un remoteAddr;
     socklen_t len = sizeof(struct sockaddr_un);
-    int remoteFd =
-        sys->accept(listenFd, (struct sockaddr *)&remoteAddr, &len);
-    if (remoteFd < 0) {
-        fprintf(stderr, "Error accepting connection on listenFd: %s\n",
+    int socket =
+        sys->accept(listenSocket, (struct sockaddr *)&remoteAddr, &len);
+    if (socket < 0) {
+        fprintf(stderr, "Error accepting connection on listenSocket: %s\n",
                 strerror(errno));
         return;
     }
@@ -238,22 +239,22 @@ CoreArbiterServer::acceptConnection(int listenFd)
     // Add new connection to epoll events list
     struct epoll_event processEvent;
     processEvent.events = EPOLLIN | EPOLLRDHUP;
-    processEvent.data.fd = remoteFd;
-    if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, remoteFd, &processEvent) < 0) {
-        fprintf(stderr, "Error adding remoteFd to epoll: %s\n",
+    processEvent.data.fd = socket;
+    if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, socket, &processEvent) < 0) {
+        fprintf(stderr, "Error adding socket to epoll: %s\n",
                 strerror(errno));
         return;
     }
 
     // Read connecting process ID from socket.
     pid_t processId;
-    if (!readData(remoteFd, &processId, sizeof(pid_t),
+    if (!readData(socket, &processId, sizeof(pid_t),
                    "Error receiving process ID")) {
         return;
     }
 
     pid_t threadId;
-    if (!readData(remoteFd, &threadId, sizeof(pid_t),
+    if (!readData(socket, &threadId, sizeof(pid_t),
                   "Error receiving thread ID")) {
         return;
     }
@@ -292,8 +293,8 @@ CoreArbiterServer::acceptConnection(int listenFd)
         char pathPacket[sizeof(size_t) + pathLen];
         memcpy(pathPacket, &pathLen, sizeof(size_t));
         memcpy(pathPacket + sizeof(size_t), sharedMemPath.c_str(), pathLen);
-        if (sys->send(remoteFd, pathPacket, sizeof(pathPacket), 0) < 0) {
-            fprintf(stderr, "Send failed: %s\n", strerror(errno));
+        if (!sendData(socket, pathPacket, sizeof(pathPacket),
+                      "Sending shared memory path failed")) {
             return;
         }
 
@@ -302,13 +303,13 @@ CoreArbiterServer::acceptConnection(int listenFd)
             processId, sharedMemFd, coreReleaseRequestCount);
 
         printf("Registered process with id %d on socket %d\n",
-               processId, remoteFd);
+               processId, socket);
     }
 
     struct ThreadInfo* thread = new ThreadInfo(threadId,
                                                processIdToInfo[processId],
-                                               remoteFd);
-    threadFdToInfo[remoteFd] = thread;
+                                               socket);
+    threadSocketToInfo[socket] = thread;
     processIdToInfo[processId]->threadStateToSet[RUNNING_SHARED].insert(thread);
 
     printf("Registered thread with id %d on process %d\n",
@@ -317,14 +318,14 @@ CoreArbiterServer::acceptConnection(int listenFd)
 
 
 void
-CoreArbiterServer::threadBlocking(int threadFd)
+CoreArbiterServer::threadBlocking(int socket)
 {
-    if (threadFdToInfo.find(threadFd) == threadFdToInfo.end()) {
+    if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
         fprintf(stderr, "Unknown thread is blocking\n");
         return;
     }
 
-    struct ThreadInfo* thread = threadFdToInfo[threadFd];
+    struct ThreadInfo* thread = threadSocketToInfo[socket];
     printf("Thread %d is blocking\n", thread->threadId);
 
     if (thread->state == BLOCKED) {
@@ -357,15 +358,15 @@ CoreArbiterServer::threadBlocking(int threadFd)
 }
 
 void
-CoreArbiterServer::coresRequested(int connectingFd)
+CoreArbiterServer::coresRequested(int socket)
 {
     core_t numCoresArr[NUM_PRIORITIES];
-    if (!readData(connectingFd, &numCoresArr, sizeof(core_t) * NUM_PRIORITIES,
+    if (!readData(socket, &numCoresArr, sizeof(core_t) * NUM_PRIORITIES,
                  "Error receiving number of cores requested")) {
         return;
     }
 
-    struct ThreadInfo* thread = threadFdToInfo[connectingFd];
+    struct ThreadInfo* thread = threadSocketToInfo[socket];
     struct ProcessInfo* process = thread->process;
 
     printf("Received core request from process %d:", process->id);
@@ -418,24 +419,22 @@ CoreArbiterServer::coresRequested(int connectingFd)
 }
 
 void
-CoreArbiterServer::countBlockedThreads(int connectingFd)
+CoreArbiterServer::countBlockedThreads(int socket)
 {
-    if (threadFdToInfo.find(connectingFd) == threadFdToInfo.end()) {
+    if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
         fprintf(stderr,
                 "Unknown connection is asking for blocked thread count\n");
         return;
     }
 
-    struct ProcessInfo* process = threadFdToInfo[connectingFd]->process;
+    struct ProcessInfo* process = threadSocketToInfo[socket]->process;
     size_t numBlockedThreads = process->threadStateToSet[BLOCKED].size();
     printf("Process %d has requested its number of blocked threads (%lu)\n",
            process->id, numBlockedThreads);
 
-    if (sys->send(connectingFd, &numBlockedThreads, sizeof(size_t), 0) < 0) {
-        fprintf(stderr, "Error sending number of blocked threads: %s\n",
-                strerror(errno));
-        return;
-    }
+    sendData(socket, &numBlockedThreads, sizeof(size_t),
+             "Error sending number of blocked threads");
+
 }
 
 void
@@ -466,15 +465,15 @@ CoreArbiterServer::timeoutCoreRetrieval(int timerFd)
 }
 
 void
-CoreArbiterServer::cleanupConnection(int connectingFd)
+CoreArbiterServer::cleanupConnection(int socket)
 {
-    sys->close(connectingFd);
-    ThreadInfo* thread = threadFdToInfo[connectingFd];
+    sys->close(socket);
+    ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
     process->threadStateToSet[thread->state].erase(thread);
 
     // Remove thread from map of threads
-    threadFdToInfo.erase(thread->socket);
+    threadSocketToInfo.erase(thread->socket);
 
     if (thread->state == RUNNING_EXCLUSIVE) {
         exclusiveThreads.erase(thread);
@@ -593,11 +592,10 @@ CoreArbiterServer::distributeCores()
             moveThreadToExclusiveCore(thread, core);
 
             // Wake up the thread
-            if (sys->send(thread->socket, &core->coreId,
-                          sizeof(core_t), 0) < 0) {
-                fprintf(stderr, "Error sending core ID to thread %d\n",
-                        thread->threadId);
-                continue;
+            if (!sendData(thread->socket, &core->coreId, sizeof(core_t),
+                          "Error sending core ID to thread " + 
+                            std::to_string(thread->threadId))) {
+                return;
             }
         } else if (threadsAlreadyExclusive.find(core->exclusiveThread) !=
                    threadsAlreadyExclusive.end()) {
@@ -650,10 +648,10 @@ CoreArbiterServer::distributeCores()
 }
 
 bool
-CoreArbiterServer::readData(int fd, void* buf, size_t numBytes,
-                                        std::string err)
+CoreArbiterServer::readData(int socket, void* buf, size_t numBytes,
+                            std::string err)
 {
-    ssize_t readBytes = sys->recv(fd, buf, numBytes, 0);
+    ssize_t readBytes = sys->recv(socket, buf, numBytes, 0);
     if (readBytes < 0) {
         fprintf(stderr, "%s: %s\n", err.c_str(), strerror(errno));
         return false;
@@ -663,6 +661,17 @@ CoreArbiterServer::readData(int fd, void* buf, size_t numBytes,
         return false;
     }
 
+    return true;
+}
+
+bool
+CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
+                            std::string err)
+{
+    if (sys->send(socket, buf, numBytes, 0) < 0) {
+        fprintf(stderr, "%s: %s\n", err.c_str(), strerror(errno));
+        return false;
+    }
     return true;
 }
 
