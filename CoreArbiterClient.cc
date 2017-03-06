@@ -225,6 +225,7 @@ CoreArbiterClient::createNewServerConnection()
     }
 
     if (testingSkipConnectionSetup) {
+        LOG(DEBUG, "Skipping connection setup\n");
         serverSocket = 999; // To tell the test that this method was called
         return;
     }
@@ -346,8 +347,8 @@ void CoreArbiterClient::readData(int socket, void* buf, size_t numBytes,
 void CoreArbiterClient::sendData(int socket, void* buf, size_t numBytes,
                                  std::string err) {
     if (sys->send(socket, buf, numBytes, 0) < 0) {
-        std::string err = err + ": " + std::string(strerror(errno));
-        LOG(ERROR, "%s\n", err.c_str());
+        std::string fullErrStr = err + ": " + std::string(strerror(errno));
+        LOG(ERROR, "%s\n", fullErrStr.c_str());
         throw ClientException(err);
     }
 }
