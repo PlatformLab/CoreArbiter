@@ -1,6 +1,6 @@
 GTEST_DIR=../googletest/googletest
-CLIENT_BINS=CoreArbiterClientTest.o ../CoreArbiterClient.o
-SERVER_BINS=CoreArbiterServerTest.o ../CoreArbiterServer.o
+CLIENT_BINS=CoreArbiterClientTest.o ../CoreArbiterClient.o ../Logger.o ../mkdir_p.o
+SERVER_BINS=CoreArbiterServerTest.o ../CoreArbiterServer.o ../Logger.o ../mkdir_p.o
 CXXFLAGS=-std=c++11 -O3 -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -g
 INCLUDE=-I.. -I../../PerfUtils -I${GTEST_DIR}/include
 LIBS=-L../ -L../../PerfUtils -L./ -lPerfUtils -lgtest -pthread
@@ -27,4 +27,4 @@ libgtest.a:
 		ar -rv libgtest.a gtest-all.o
 
 clean:
-	rm -f $(BINS) CoreArbiterServerTest CoreArbiterClientTest
+	rm -f $(CLIENT_BINS) $(SERVER_BINS) CoreArbiterServerTest CoreArbiterClientTest

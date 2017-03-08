@@ -18,6 +18,7 @@
 #include "gtest/gtest.h"
 #include "MockSyscall.h"
 #include "CoreArbiterClient.h"
+#include "Logger.h"
 
 namespace CoreArbiter {
 
@@ -34,11 +35,13 @@ class CoreArbiterClientTest : public ::testing::Test {
     CoreArbiterClient client;
 
     CoreArbiterClientTest()
-        : socketPath("testsocket")
-        , memPath("testmem")
+        : socketPath("/tmp/CoreArbiter/testsocket")
+        , memPath("/tmp/CoreArbiter/testsocket")
         , coreReleaseRequestCount(0)
         , client("")
     {
+        Logger::setLogLevel(ERROR);
+
         sys = new MockSyscall();
         CoreArbiterClient::sys = sys;
 
