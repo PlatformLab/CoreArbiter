@@ -40,7 +40,7 @@ class CoreArbiterServerTest : public ::testing::Test {
         : socketPath("/tmp/CoreArbiter/testsocket")
         , memPath("/tmp/CoreArbiter/testmem")
     {
-        Logger::setLogLevel(ERROR);
+        Logger::setLogLevel(DEBUG);
 
         sys = new MockSyscall();
         CoreArbiterServer::sys = sys;
@@ -326,6 +326,38 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
         &processes[1] : &processes[0];
     ASSERT_EQ(server.exclusiveThreads.size(), 2u);
     ASSERT_EQ(otherProcess->totalCoresOwned, 2);
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+}
+
+TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4});
+    std::vector<ProcessInfo> processes(2);
+    std::vector<ThreadInfo> threads(8);
+    setupProcessesAndThreads(server, processes, threads,
+                             CoreArbiterServer::BLOCKED);
+
+    ProcessInfo* highPriorityProcess = &processes[0];
+    ProcessInfo* lowPriorityProcess = &processes[1];
+    highPriorityProcess->desiredCorePriorities[6] = 3;
+    lowPriorityProcess->desiredCorePriorities[7] = 3;
+    server.corePriorityQueues[6].push_back(highPriorityProcess);
+    server.corePriorityQueues[7].push_back(lowPriorityProcess);
+
+    // Higher priorities are assigned before lower priorities
+    server.distributeCores();
+    ASSERT_EQ(server.exclusiveThreads.size(), 4u);
+    ASSERT_EQ(highPriorityProcess->totalCoresOwned, 3);
+    ASSERT_EQ(lowPriorityProcess->totalCoresOwned, 1);
+
+    // Higher priority threads preempt lower priority threads
+    highPriorityProcess->desiredCorePriorities[6] = 4;
+    core_t coreReleaseRequestCount = 0;
+    lowPriorityProcess->coreReleaseRequestCount = &coreReleaseRequestCount;
+    server.distributeCores();
+    ASSERT_EQ(coreReleaseRequestCount, 1);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
 }
