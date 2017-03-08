@@ -87,7 +87,7 @@ CoreArbiterClient::setNumCores(std::vector<core_t>& numCores)
 {
     if (numCores.size() != NUM_PRIORITIES) {
         std::string err = "Core request must have " +
-                          std::to_string(NUM_PRIORITIES) + " priorities\n";
+                          std::to_string(NUM_PRIORITIES) + " priorities";
         LOG(ERROR, "%s\n", err.c_str());
         throw ClientException(err);
     }
