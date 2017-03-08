@@ -47,7 +47,7 @@ class CoreArbiterServer {
     struct CoreInfo;
 
     struct CoreInfo {
-        core_t coreId;
+        core_t id;
         struct ThreadInfo* exclusiveThread;
         std::ofstream cpusetFile;
 
@@ -58,7 +58,7 @@ class CoreArbiterServer {
 
     enum ThreadState { RUNNING_EXCLUSIVE, RUNNING_SHARED, BLOCKED };
     struct ThreadInfo {
-        pid_t threadId;
+        pid_t id;
         struct ProcessInfo* process;
         int socket;
         struct CoreInfo* core;
@@ -67,7 +67,7 @@ class CoreArbiterServer {
         ThreadInfo() {}
 
         ThreadInfo(pid_t threadId, struct ProcessInfo* process, int socket)
-            : threadId(threadId)
+            : id(threadId)
             , process(process)
             , socket(socket)
             , core(NULL)

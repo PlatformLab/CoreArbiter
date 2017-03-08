@@ -77,7 +77,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         // Cpusets should be set up properly now, so we'll save the files needed
         // for moving processes between cpusets
         std::string sharedTasksPath = sharedCpusetPath + "/tasks";
-        sharedCore.coreId = 0;
+        sharedCore.id = 0;
         sharedCore.cpusetFile.open(sharedTasksPath);
         if (!sharedCore.cpusetFile.is_open()) {
             LOG(ERROR, "Unable to open %s\n", sharedTasksPath.c_str());
@@ -91,7 +91,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                          std::to_string(coreId) + "/tasks";
 
         struct CoreInfo* coreInfo = &exclusiveCores[i];
-        coreInfo->coreId = coreId;
+        coreInfo->id = coreId;
 
         if (!testingSkipCpusetAllocation) {
             coreInfo->cpusetFile.open(exclusiveTasksPath);
@@ -333,10 +333,10 @@ CoreArbiterServer::threadBlocking(int socket)
     }
 
     struct ThreadInfo* thread = threadSocketToInfo[socket];
-    LOG(NOTICE, "Thread %d is blocking\n", thread->threadId);
+    LOG(NOTICE, "Thread %d is blocking\n", thread->id);
 
     if (thread->state == BLOCKED) {
-        LOG(WARNING, "Thread %d was already blocked\n", thread->threadId);
+        LOG(WARNING, "Thread %d was already blocked\n", thread->id);
         return;
     }
 
@@ -347,12 +347,12 @@ CoreArbiterServer::threadBlocking(int socket)
             // a number of cores smaller than the process owns. Blocking the
             // thread when not asked to causes races.
             LOG(WARNING,
-                "Thread %d should not be blocking\n", thread->threadId);
+                "Thread %d should not be blocking\n", thread->id);
             return;
         }
 
         LOG(NOTICE, "Removing thread %d from core %lu\n",
-               thread->threadId, thread->core->coreId);
+               thread->id, thread->core->id);
         process->coreReleaseCount++;
         process->totalCoresOwned--;
         removeThreadFromExclusiveCore(thread);
@@ -625,14 +625,14 @@ CoreArbiterServer::distributeCores()
             threadsToReceiveCores.pop_front();
             
             LOG(NOTICE, "Granting core %lu to thread %d from process %d\n",
-                   core->coreId, thread->threadId, thread->process->id);
+                   core->id, thread->id, thread->process->id);
             moveThreadToExclusiveCore(thread, core);
 
             if (!testingSkipCpusetAllocation) {
                 // Wake up the thread
-                if (!sendData(thread->socket, &core->coreId, sizeof(core_t),
+                if (!sendData(thread->socket, &core->id, sizeof(core_t),
                               "Error sending core ID to thread " +
-                                    std::to_string(thread->threadId))) {
+                                    std::to_string(thread->id))) {
                     return;
                 }
             }
@@ -640,7 +640,7 @@ CoreArbiterServer::distributeCores()
                    threadsAlreadyExclusive.end()) {
             // This thread is supposed to have a core, so do nothing.
             LOG(NOTICE, "Keeping thread %d on core %lu\n",
-                   core->exclusiveThread->threadId, core->coreId);
+                   core->exclusiveThread->id, core->id);
         } else {
             // The thread on this core needs to be preempted. It will be
             // assigned to a new thread (one of the ones at the end of
@@ -648,7 +648,7 @@ CoreArbiterServer::distributeCores()
             // or is demoted in timeoutCoreRetrieval
             struct ProcessInfo* process = core->exclusiveThread->process;
             LOG(NOTICE, "Starting preemption of thread belonging to process %d "
-                "on core %lu\n", process->id, core->coreId);
+                "on core %lu\n", process->id, core->id);
             
             // Tell the process that it needs to release a core
             *(process->coreReleaseRequestCount) += 1;
@@ -829,13 +829,13 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
 {
     if (!testingSkipCpusetAllocation) {
         core->cpusetFile.seekp(0);
-        core->cpusetFile << thread->threadId;
+        core->cpusetFile << thread->id;
         core->cpusetFile.flush();
         if (core->cpusetFile.bad()) {
             // TODO: handle this elegantly. It shouldn't happen, so I'm killing
             // the server for now.
             LOG(ERROR, "Unable to write %d to cpuset file for core %lu",
-                thread->threadId, core->coreId);
+                thread->id, core->id);
             exit(-1);
         }
     }
@@ -853,19 +853,19 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
 {
     if (!thread->core) {
         LOG(WARNING, "Thread %d was already on shared core\n",
-            thread->threadId);
+            thread->id);
     }
 
     if (!testingSkipCpusetAllocation) {
         // Writing a thread to a new cpuset automatically removes it from the
         // one it belonged to before
-        sharedCore.cpusetFile << thread->threadId;
+        sharedCore.cpusetFile << thread->id;
         sharedCore.cpusetFile.flush();
         if (sharedCore.cpusetFile.bad()) {
             // TODO: handle this elegantly. It shouldn't happen, so I'm killing
             // the server for now.
             LOG(ERROR, "Unable to write %d to cpuset file for core %lu",
-                thread->threadId, sharedCore.coreId);
+                thread->id, sharedCore.id);
             exit(-1);
         }
     }
