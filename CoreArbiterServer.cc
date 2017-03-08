@@ -29,11 +29,13 @@ std::string CoreArbiterServer::cpusetPath = "/sys/fs/cgroup/cpuset";
 static Syscall defaultSyscall;
 Syscall* CoreArbiterServer::sys = &defaultSyscall;
 bool CoreArbiterServer::testingSkipCpusetAllocation = false;
+bool CoreArbiterServer::testingSkipCoreDistribution = false;
 
 CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
                                      std::vector<core_t> exclusiveCoreIds)
-    : sharedMemPathPrefix(sharedMemPathPrefix)
+    : socketPath(socketPath)
+    , sharedMemPathPrefix(sharedMemPathPrefix)
     , epollFd(-1)
     , listenSocket(-1)
     , exclusiveCores(exclusiveCoreIds.size())
@@ -157,7 +159,10 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
 
 CoreArbiterServer::~CoreArbiterServer()
 {
-
+    sys->close(listenSocket);
+    if (remove(socketPath.c_str()) != 0) {
+        LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
+    }
 }
 
 void
@@ -336,7 +341,6 @@ CoreArbiterServer::threadBlocking(int socket)
     if (thread->state == RUNNING_EXCLUSIVE) {
         if (*(process->coreReleaseRequestCount) ==
             process->coreReleaseCount) {
-            // Cores should be given up voluntarily by calling setNumCores with
             // a number of cores smaller than the process owns. Blocking the
             // thread when not asked to causes races.
             LOG(WARNING,
@@ -505,48 +509,93 @@ CoreArbiterServer::cleanupConnection(int socket)
 void
 CoreArbiterServer::distributeCores()
 {
+    if (testingSkipCoreDistribution) {
+        LOG(DEBUG, "Skipping core distribution\n");
+        return;
+    }
+
     LOG(NOTICE, "Distributing cores among threads...\n");
 
-    // First, build the set of threads that should receive cores
+    // First, find the threads that should receive cores.
+    // This is a queue (front has higher priority) of threads not currently
+    // exclusive that should be placed on cores
     std::deque<struct ThreadInfo*> threadsToReceiveCores;
 
+    // Keep track of the threads that are already exclusive and should remain so
+    std::unordered_set<struct ThreadInfo*> threadsAlreadyExclusive;
+
     // Iterate from highest to lowest priority
-    for (std::deque<struct ProcessInfo*>& processes : corePriorityQueues) {
+    bool coresFilled = false;
+    for (size_t priority = 0;
+         priority < corePriorityQueues.size() && !coresFilled; priority++) {
+
+        auto& processes = corePriorityQueues[priority];
         bool threadAdded = true;
 
-        // Continue at this priority level as long as we are still able to add
-        // threads
-        while (threadAdded &&
-               threadsToReceiveCores.size() < exclusiveCores.size()) {
+        // A running count of how many cores we have assigned to a process at
+        // this priority. This makes it easy to ensure that we don't assign
+        // more cores to a process than it has requested.
+        std::unordered_map<struct ProcessInfo*, core_t> processToCoreCount;
+
+        // Any threads that are already exclusive should remain so at this
+        // priority.
+        for (struct ThreadInfo* thread : exclusiveThreads) {
+            if (threadsAlreadyExclusive.find(thread) !=
+                    threadsAlreadyExclusive.end()) {
+                continue;
+            }
+
+            struct ProcessInfo* process = thread->process;
+            if (processToCoreCount[process] <
+                    process->desiredCorePriorities[priority]) {
+                // We want to keep this thread on its core
+                threadsAlreadyExclusive.insert(thread);
+                processToCoreCount[process]++;
+
+                if (threadsToReceiveCores.size() +
+                      threadsAlreadyExclusive.size() == exclusiveCores.size()) {
+                    coresFilled = true;
+                    break;
+                }
+            }
+        }
+
+        // Add as many blocked threads at this priority level as we can
+        while (threadAdded && !coresFilled) {
             threadAdded = false;
 
             // Iterate over every process at this priority level
-            for (size_t i = 0; i < processes.size() &&
-                 threadsToReceiveCores.size() < exclusiveCores.size();
-                 i++) {
+            for (size_t i = 0; i < processes.size(); i++) {
                 // Pop off the first processes and put it at the back of the
-                // deque (so that we share cores accross threads at this
+                // deque (so that we share cores evenly accross threads at this
                 // priority level)
                 struct ProcessInfo* process = processes.front();
                 processes.pop_front();
                 processes.push_back(process);
 
-                // Favor keeping existing exclusive threads on the core
-                std::unordered_set<struct ThreadInfo*>* threadSet =
-                    &process->threadStateToSet[RUNNING_EXCLUSIVE];
-                if (threadSet->empty()) {
-                    threadSet = &process->threadStateToSet[BLOCKED];
+                if (processToCoreCount[process] ==
+                        process->desiredCorePriorities[priority]) {
+                    continue;
                 }
 
-                // If this process has blocked threads, add one to the set
-                if (!threadSet->empty()) {
-                    struct ThreadInfo* thread = *(threadSet->begin());
+                auto& blockedThreads = process->threadStateToSet[BLOCKED];
+                if (!blockedThreads.empty()) {
+                    // Choose some blocked thread to put on a core
+                    struct ThreadInfo* thread = *(blockedThreads.begin());
                     threadsToReceiveCores.push_back(thread);
+                    processToCoreCount[process]++;
                     threadAdded = true;
 
-                    // Temporarily remove the thread from the process's set
-                    // of threads so that we don't double count it
-                    threadSet->erase(thread);
+                    // Temporarily remove the thread from the process's set of
+                    // threads so that we don't double count it
+                    blockedThreads.erase(thread);
+
+                    if (threadsToReceiveCores.size() +
+                            threadsAlreadyExclusive.size() ==
+                                exclusiveCores.size()) {
+                        coresFilled = true;
+                        break;
+                    }
                 }
             }
         }
@@ -558,20 +607,7 @@ CoreArbiterServer::distributeCores()
     }
 
     if (threadsToReceiveCores.empty()) {
-        LOG(NOTICE, "There are no threads available to move to a core\n");
         return;
-    }
-
-    // Find the intersection of threads that should receive cores and threads
-    // that are already exclusive
-    std::unordered_set<struct ThreadInfo*> threadsAlreadyExclusive;
-    for (struct ThreadInfo* thread : exclusiveThreads) {
-        auto threadIter = std::find(threadsToReceiveCores.begin(),
-                                    threadsToReceiveCores.end(), thread);
-        if (threadIter != threadsToReceiveCores.end()) {
-            threadsToReceiveCores.erase(threadIter);
-            threadsAlreadyExclusive.insert(*threadIter);
-        }
     }
 
     // Assign cores to threads
@@ -585,15 +621,17 @@ CoreArbiterServer::distributeCores()
             struct ThreadInfo* thread = threadsToReceiveCores.front();
             threadsToReceiveCores.pop_front();
             
-            LOG(NOTICE, "Granting core %lu to thread %d\n",
-                   core->coreId, thread->threadId);
+            LOG(NOTICE, "Granting core %lu to thread %d from process %d\n",
+                   core->coreId, thread->threadId, thread->process->id);
             moveThreadToExclusiveCore(thread, core);
 
-            // Wake up the thread
-            if (!sendData(thread->socket, &core->coreId, sizeof(core_t),
-                          "Error sending core ID to thread " + 
-                                std::to_string(thread->threadId))) {
-                return;
+            if (!testingSkipCpusetAllocation) {
+                // Wake up the thread
+                if (!sendData(thread->socket, &core->coreId, sizeof(core_t),
+                              "Error sending core ID to thread " +
+                                    std::to_string(thread->threadId))) {
+                    return;
+                }
             }
         } else if (threadsAlreadyExclusive.find(core->exclusiveThread) !=
                    threadsAlreadyExclusive.end()) {

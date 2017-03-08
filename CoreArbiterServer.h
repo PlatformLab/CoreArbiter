@@ -90,7 +90,11 @@ class CoreArbiterServer {
         std::unordered_map<ThreadState, std::unordered_set<struct ThreadInfo*>,
                           std::hash<int>> threadStateToSet;
 
-        ProcessInfo() {}
+        ProcessInfo()
+            : totalCoresOwned(0)
+            , totalCoresDesired(0)
+            , desiredCorePriorities(NUM_PRIORITIES)
+        {}
 
         ProcessInfo(pid_t id, int sharedMemFd, core_t* coreReleaseRequestCount)
             : id(id)
@@ -123,6 +127,7 @@ class CoreArbiterServer {
 
     static std::string cpusetPath;
 
+    std::string socketPath;
     std::string sharedMemPathPrefix;
     int epollFd;
     int listenSocket;
@@ -142,6 +147,7 @@ class CoreArbiterServer {
 
     static Syscall* sys;
     static bool testingSkipCpusetAllocation;
+    static bool testingSkipCoreDistribution;
 };
 
 }
