@@ -46,9 +46,9 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         exit(-1);
     }
 
+    std::string arbiterCpusetPath = cpusetPath + "/CoreArbiter";
     if (!testingSkipCpusetAllocation) {
         // Remove any old cpusets from a previous server
-        std::string arbiterCpusetPath = cpusetPath + "/CoreArbiter";
         removeOldCpusets(arbiterCpusetPath);
 
         // Create a new cpuset directory for core arbitration. Since this is
@@ -83,14 +83,17 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             LOG(ERROR, "Unable to open %s\n", sharedTasksPath.c_str());
             exit(-1);
         }
+    }
 
-        for (size_t i = 0; i < exclusiveCoreIds.size(); i++) {
-            core_t coreId = exclusiveCoreIds[i];
-            std::string exclusiveTasksPath = arbiterCpusetPath + "/Exclusive" +
-                                             std::to_string(coreId) + "/tasks";
+    for (size_t i = 0; i < exclusiveCoreIds.size(); i++) {
+        core_t coreId = exclusiveCoreIds[i];
+        std::string exclusiveTasksPath = arbiterCpusetPath + "/Exclusive" +
+                                         std::to_string(coreId) + "/tasks";
 
-            struct CoreInfo* coreInfo = &exclusiveCores[i];
-            coreInfo->coreId = coreId;
+        struct CoreInfo* coreInfo = &exclusiveCores[i];
+        coreInfo->coreId = coreId;
+
+        if (!testingSkipCpusetAllocation) {
             coreInfo->cpusetFile.open(exclusiveTasksPath);
             if (!coreInfo->cpusetFile.is_open()) {
                 LOG(ERROR, "Unable to open %s\n", exclusiveTasksPath.c_str());
