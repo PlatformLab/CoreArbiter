@@ -59,13 +59,12 @@ class CoreArbiterServerTest : public ::testing::Test {
     }
 
     /**
-     * Populates processes and threads with RUNNING_SHARED threads
+     * Populates processes and threads with defaultState threads
      */
     void setupProcessesAndThreads(CoreArbiterServer& server,
                                   std::vector<ProcessInfo>& processes,
                                   std::vector<ThreadInfo>& threads,
                                   ThreadState defaultState) {
-
         size_t threadIdx = 0;
         for (size_t i = 0; i < processes.size(); i++) {
             ProcessInfo* process = &processes[i];
@@ -75,7 +74,7 @@ class CoreArbiterServerTest : public ::testing::Test {
             for (size_t j = 0; j < threads.size() / processes.size(); j++) {
                 ThreadInfo* thread = &threads[threadIdx];
                 thread->process = process;
-                thread->threadId = (pid_t)threadIdx;
+                thread->id = (pid_t)threadIdx;
                 thread->state = defaultState;
                 process->threadStateToSet[defaultState].insert(thread);
 
@@ -186,6 +185,70 @@ TEST_F(CoreArbiterServerTest, threadBlocking) {
     coreReleaseRequestCount = 1;
     server.threadBlocking(socket);
     ASSERT_EQ(thread.state, CoreArbiterServer::BLOCKED);
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipCoreDistribution = false;
+}
+
+TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipCoreDistribution = true;
+
+    CoreArbiterServer server(socketPath, memPath, {1});
+
+    pid_t processId = 0;
+    pid_t threadId = 1;
+    int socket = 2;
+    core_t coreReleaseRequestCount = 1;
+    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+    ThreadInfo thread(threadId, &process, socket);
+    thread.state = CoreArbiterServer::RUNNING_PREEMPTED;
+    thread.process = &process;
+    server.threadSocketToInfo[socket] = &thread;
+
+    // A preempted thread blocking counts as releasing a core
+    server.threadBlocking(socket);
+    ASSERT_EQ(process.coreReleaseCount, 1);
+    ASSERT_EQ(thread.state, CoreArbiterServer::BLOCKED);
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipCoreDistribution = false;
+}
+
+TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipCoreDistribution = true;
+
+    CoreArbiterServer server(socketPath, memPath, {1, 2});
+
+    pid_t processId = 0;
+    pid_t threadId1 = 1;
+    pid_t threadId2 = 2;
+    int socket1 = 3;
+    int socket2 = 4;
+    core_t coreReleaseRequestCount = 1;
+    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+    ThreadInfo thread1(threadId1, &process, socket1);
+    ThreadInfo thread2(threadId2, &process, socket2);
+    CoreInfo* core = &server.exclusiveCores[0];
+    thread1.state = CoreArbiterServer::RUNNING_EXCLUSIVE;
+    thread2.state = CoreArbiterServer::RUNNING_PREEMPTED;
+    thread1.core = core;
+    thread1.process = &process;
+    thread2.process = &process;
+    server.threadSocketToInfo[socket1] = &thread1;
+    server.threadSocketToInfo[socket2] = &thread2;
+    process.threadStateToSet[CoreArbiterServer::RUNNING_PREEMPTED]
+           .insert(&thread2);
+    process.totalCoresOwned = 1;
+
+    // When a process with a preempted thread gives up an exclusive core, the
+    // preempted thread should be moved back to that core
+    server.threadBlocking(socket1);
+    ASSERT_EQ(thread1.state, CoreArbiterServer::BLOCKED);
+    ASSERT_EQ(thread2.state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+    ASSERT_EQ(process.coreReleaseCount, 1);
+    ASSERT_EQ(process.totalCoresOwned, 1);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
@@ -362,4 +425,40 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     CoreArbiterServer::testingSkipCpusetAllocation = false;
 }
 
+TEST_F(CoreArbiterServerTest, preemptCore) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+
+    CoreArbiterServer server(socketPath, memPath, {1});
+
+    pid_t processId = 1;
+    pid_t threadId = 2;
+    core_t coreReleaseRequestCount = 0;
+    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+    ThreadInfo thread(threadId, &process, serverSocket);
+    CoreInfo* core = &server.exclusiveCores[0];
+    thread.state = CoreArbiterServer::RUNNING_EXCLUSIVE;
+    thread.core = core;
+    core->exclusiveThread = &thread;
+    process.threadStateToSet[CoreArbiterServer::RUNNING_EXCLUSIVE]
+           .insert(&thread);
+    process.totalCoresOwned = 1;
+    server.preemptionTimeout = 1; // For faster testing
+
+    // If the client is cooperative, nothing should happen
+    process.coreReleaseCount = 1;
+    server.requestCoreRelease(core);
+    server.handleEvents();
+    ASSERT_EQ(thread.state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+
+    // If client is uncooperative, the thread should be removed from its core
+    process.coreReleaseCount = 0;
+    server.requestCoreRelease(core);
+    server.handleEvents();
+    ASSERT_EQ(thread.state, CoreArbiterServer::RUNNING_PREEMPTED);
+    ASSERT_EQ(core->exclusiveThread, (ThreadInfo*)NULL);
+    ASSERT_EQ(process.totalCoresOwned, 0);
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+}
+    
 }

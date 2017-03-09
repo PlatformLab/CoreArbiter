@@ -56,7 +56,22 @@ class CoreArbiterServer {
         {}
     };
 
-    enum ThreadState { RUNNING_EXCLUSIVE, RUNNING_SHARED, BLOCKED };
+    enum ThreadState {
+        // Running on an exclusive core
+        RUNNING_EXCLUSIVE,
+
+        // Voluntarily running on the unmanaged core (this only happens before
+        // the first call to blockUntilCoreAvailable())
+        RUNNING_SHARED,
+
+        // Running on the unmanaged core because it was forceably preempted from
+        // its excluisve core
+        RUNNING_PREEMPTED,
+
+        // Not running, waiting to be put on core
+        BLOCKED
+    };
+    
     struct ThreadInfo {
         pid_t id;
         struct ProcessInfo* process;
@@ -107,14 +122,17 @@ class CoreArbiterServer {
         {}
     };
 
+    void handleEvents();
+
     void acceptConnection(int listenSocket);
     void threadBlocking(int socket);
     void coresRequested(int socket);
     void countBlockedThreads(int socket);
-    void timeoutCoreRetrieval(int timerFd);
+    void timeoutThreadPreemption(int timerFd);
     void cleanupConnection(int socket);
 
     void distributeCores();
+    void requestCoreRelease(struct CoreInfo* core);
     bool readData(int socket, void* buf, size_t numBytes, std::string err);
     bool sendData(int socket, void* buf, size_t numBytes, std::string err);
     void createCpuset(std::string dirName, std::string cores, std::string mems);
@@ -132,6 +150,7 @@ class CoreArbiterServer {
     int epollFd;
     int listenSocket;
     std::unordered_map<int, struct ProcessInfo*> timerFdToProcess;
+    uint64_t preemptionTimeout;
 
     std::unordered_map<int, struct ThreadInfo*> threadSocketToInfo;
     std::unordered_map<pid_t, struct ProcessInfo*> processIdToInfo;

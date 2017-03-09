@@ -38,6 +38,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     , sharedMemPathPrefix(sharedMemPathPrefix)
     , epollFd(-1)
     , listenSocket(-1)
+    , preemptionTimeout(RELEASE_TIMEOUT_MS)
     , exclusiveCores(exclusiveCoreIds.size())
     , corePriorityQueues(NUM_PRIORITIES)
 {
@@ -168,67 +169,75 @@ CoreArbiterServer::~CoreArbiterServer()
     }
 }
 
+/**
+ * A wrapper around handleEvents() which does the meat of request
+ * handling. It's useful to separate out the loop for testing.
+ */
 void
 CoreArbiterServer::startArbitration()
 {
-    struct epoll_event events[MAX_EPOLL_EVENTS];
-
     while (true) {
-        int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS, -1);
-        if (numFds < 0) {
-            LOG(ERROR, "Error on epoll_wait: %s\n", strerror(errno));
-            continue;
-        }
+        handleEvents();
+    }
+}
 
-        for (int i = 0; i < numFds; i++) {
-            int socket = events[i].data.fd;
+void CoreArbiterServer::handleEvents()
+{
+    struct epoll_event events[MAX_EPOLL_EVENTS];
+    int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS, -1);
+    if (numFds < 0) {
+        LOG(ERROR, "Error on epoll_wait: %s\n", strerror(errno));
+        return;
+    }
 
-            if (events[i].events & EPOLLRDHUP) {
-                // A thread exited or otherwise closed its connection
-                LOG(NOTICE, "detected closed connection for fd %d\n", socket);
-                sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
-                               socket, &events[i]);
-                cleanupConnection(socket);
-            } else if (socket == listenSocket) {
-                // A new thread is connecting
-                acceptConnection(listenSocket);
-            } else if (timerFdToProcess.find(socket)
-                        != timerFdToProcess.end()) {
-                // Core retrieval timer timeout
-                timeoutCoreRetrieval(socket);
-                sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
-                               socket, &events[i]);
-            } else {
-                // Thread is making some sort of request
-                if (!(events[i].events & EPOLLIN)) {
-                    LOG(WARNING, "Did not receive a message type.\n");
-                    continue;
-                }
+    for (int i = 0; i < numFds; i++) {
+        int socket = events[i].data.fd;
 
-                uint8_t msgType;
-                if (!readData(socket, &msgType, sizeof(uint8_t),
-                             "Error reading message type")) {
-                    continue;
-                }
+        if (events[i].events & EPOLLRDHUP) {
+            // A thread exited or otherwise closed its connection
+            LOG(NOTICE, "detected closed connection for fd %d\n", socket);
+            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
+                           socket, &events[i]);
+            cleanupConnection(socket);
+        } else if (socket == listenSocket) {
+            // A new thread is connecting
+            acceptConnection(listenSocket);
+        } else if (timerFdToProcess.find(socket)
+                    != timerFdToProcess.end()) {
+            // Core retrieval timer timeout
+            timeoutThreadPreemption(socket);
+            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
+                           socket, &events[i]);
+        } else {
+            // Thread is making some sort of request
+            if (!(events[i].events & EPOLLIN)) {
+                LOG(WARNING, "Did not receive a message type.\n");
+                continue;
+            }
 
-                switch(msgType) {
-                    case THREAD_BLOCK:
-                        threadBlocking(socket);
-                        break;
-                    case CORE_REQUEST:
-                        coresRequested(socket);
-                        break;
-                    case COUNT_BLOCKED_THREADS:
-                        countBlockedThreads(socket);
-                        break;
-                    default:
-                        LOG(ERROR, "Unknown message type: %u\n", msgType);
-                        break;
-                }
+            uint8_t msgType;
+            if (!readData(socket, &msgType, sizeof(uint8_t),
+                         "Error reading message type")) {
+                continue;
+            }
+
+            switch(msgType) {
+                case THREAD_BLOCK:
+                    threadBlocking(socket);
+                    break;
+                case CORE_REQUEST:
+                    coresRequested(socket);
+                    break;
+                case COUNT_BLOCKED_THREADS:
+                    countBlockedThreads(socket);
+                    break;
+                default:
+                    LOG(ERROR, "Unknown message type: %u\n", msgType);
+                    break;
             }
         }
-        LOG(NOTICE, "\n");
     }
+    LOG(NOTICE, "\n");
 }
 
 void
@@ -341,25 +350,46 @@ CoreArbiterServer::threadBlocking(int socket)
     }
 
     struct ProcessInfo* process = thread->process;
-    if (thread->state == RUNNING_EXCLUSIVE) {
-        if (*(process->coreReleaseRequestCount) ==
-            process->coreReleaseCount) {
-            // a number of cores smaller than the process owns. Blocking the
-            // thread when not asked to causes races.
-            LOG(WARNING,
-                "Thread %d should not be blocking\n", thread->id);
-            return;
-        }
+    bool processOwesCore =
+        *(process->coreReleaseRequestCount) > process->coreReleaseCount;
+    bool shouldDistributeCores = true;
 
+    if (thread->state == RUNNING_EXCLUSIVE && processOwesCore) {
         LOG(NOTICE, "Removing thread %d from core %lu\n",
-               thread->id, thread->core->id);
+            thread->id, thread->core->id);
         process->coreReleaseCount++;
-        process->totalCoresOwned--;
+        struct CoreInfo* core = thread->core;
         removeThreadFromExclusiveCore(thread);
+
+        auto& runningPreemptedSet =
+            thread->process->threadStateToSet[RUNNING_PREEMPTED];
+        if (!runningPreemptedSet.empty()) {
+            // This process previously had a thread preempted and moved to the
+            // unmanaged core, but now that it has complied we can move its
+            // thread back onto an exclusive core.
+            struct ThreadInfo* unmanagedThread = *(runningPreemptedSet.begin());
+            LOG(NOTICE, "Moving previously preempted thread %d back to "
+                        "exclusive core\n", unmanagedThread->id);
+            moveThreadToExclusiveCore(unmanagedThread, core);
+            shouldDistributeCores = false;
+        }
+    } else if (thread->state == RUNNING_EXCLUSIVE && !processOwesCore) {
+        // This process has not been asked to release a core, so don't
+        // allow it to block.
+        LOG(WARNING, "Thread %d should not be blocking\n", thread->id);
+        return;
+    } else if (thread->state == RUNNING_PREEMPTED && processOwesCore) {
+        LOG(NOTICE, "Preempted thread %d is blocking\n", thread->id);
+        process->coreReleaseCount++;
+    } else if (thread->state == RUNNING_PREEMPTED && !processOwesCore) {
+        LOG(WARNING, "Inconsistent state! Thread %d was preempted, but its "
+                     "process does not owe a core.\n", thread->id);
     }
 
     changeThreadState(thread, BLOCKED);
-    distributeCores();
+    if (shouldDistributeCores) {
+        distributeCores();
+    }
 }
 
 void
@@ -443,11 +473,10 @@ CoreArbiterServer::countBlockedThreads(int socket)
 }
 
 void
-CoreArbiterServer::timeoutCoreRetrieval(int timerFd)
+CoreArbiterServer::timeoutThreadPreemption(int timerFd)
 {
     uint64_t time;
     read(timerFd, &time, sizeof(uint64_t));
-
 
     struct ProcessInfo* process = timerFdToProcess[timerFd];
 
@@ -459,12 +488,19 @@ CoreArbiterServer::timeoutCoreRetrieval(int timerFd)
     }
 
     LOG(NOTICE, "Core retrieval timer went off for process %d. Moving one of "
-        "its threads to the shared core.\n", process->id);
+                "its threads to the shared core.\n", process->id);
 
     // Remove one of this process's threads from its exclusive core
-    struct ThreadInfo* thread =
-        *(process->threadStateToSet[RUNNING_EXCLUSIVE].begin());
+    auto& exclusiveThreadSet = process->threadStateToSet[RUNNING_EXCLUSIVE];
+    if (exclusiveThreadSet.empty()) {
+        LOG(WARNING, "Unable to preempt from process %d because it has no "
+                     "exclusive threads.\n", process->id);
+        return;
+    }
+
+    struct ThreadInfo* thread = *(exclusiveThreadSet.begin());
     removeThreadFromExclusiveCore(thread);
+    changeThreadState(thread, RUNNING_PREEMPTED);
 
     distributeCores();
 }
@@ -645,43 +681,56 @@ CoreArbiterServer::distributeCores()
             // The thread on this core needs to be preempted. It will be
             // assigned to a new thread (one of the ones at the end of
             // threadsToReceiveCores) when the currently running thread blocks
-            // or is demoted in timeoutCoreRetrieval
-            struct ProcessInfo* process = core->exclusiveThread->process;
-            LOG(NOTICE, "Starting preemption of thread belonging to process %d "
-                "on core %lu\n", process->id, core->id);
-            
-            // Tell the process that it needs to release a core
-            *(process->coreReleaseRequestCount) += 1;
-
-            int timerFd = sys->timerfd_create(CLOCK_MONOTONIC, 0);
-            if (timerFd < 0) {
-                LOG(ERROR, "Error on timerfd_create: %s\n", strerror(errno));
-                continue;
-            }
-
-            // Set timer to enforce preemption
-            struct itimerspec timerSpec;
-            timerSpec.it_value.tv_sec = RELEASE_TIMEOUT_MS / 1000;
-            timerSpec.it_value.tv_nsec = (RELEASE_TIMEOUT_MS % 1000) * 1000000;
-
-            if (sys->timerfd_settime(timerFd, 0, &timerSpec, NULL) < 0) {
-                LOG(ERROR, "Error on timerFd_settime: %s\n", strerror(errno));
-                continue;
-            }
-
-            struct epoll_event timerEvent;
-            timerEvent.events = EPOLLIN | EPOLLRDHUP;
-            timerEvent.data.fd = timerFd;
-            if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, timerFd, &timerEvent)
-                    < 0) {
-                LOG(ERROR, "Error adding timerFd to epoll: %s\n",
-                    strerror(errno));
-                return;
-            }
-
-            timerFdToProcess[timerFd] = process;
+            // or is demoted in timeoutThreadPreemption
+            requestCoreRelease(core);
         }
     }
+}
+
+void
+CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
+{
+    if (!core->exclusiveThread) {
+        LOG(WARNING, "There is no thread on core %lu to preempt\n", core->id);
+        return;
+    }
+
+    struct ProcessInfo* process = core->exclusiveThread->process;
+    LOG(NOTICE, "Starting preemption of thread belonging to process %d "
+        "on core %lu\n", process->id, core->id);
+
+    // Tell the process that it needs to release a core
+    *(process->coreReleaseRequestCount) += 1;
+
+    int timerFd = sys->timerfd_create(CLOCK_MONOTONIC, 0);
+    if (timerFd < 0) {
+        LOG(ERROR, "Error on timerfd_create: %s\n", strerror(errno));
+        return;
+    }
+
+    // Set timer to enforce preemption
+    struct itimerspec timerSpec;
+    timerSpec.it_interval.tv_sec = 0;
+    timerSpec.it_interval.tv_nsec = 0;
+    timerSpec.it_value.tv_sec = preemptionTimeout / 1000;
+    timerSpec.it_value.tv_nsec = (preemptionTimeout % 1000) * 1000000;
+
+    if (sys->timerfd_settime(timerFd, 0, &timerSpec, NULL) < 0) {
+        LOG(ERROR, "Error on timerFd_settime: %s\n", strerror(errno));
+        return;
+    }
+
+    struct epoll_event timerEvent;
+    timerEvent.events = EPOLLIN | EPOLLRDHUP;
+    timerEvent.data.fd = timerFd;
+    if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, timerFd, &timerEvent)
+            < 0) {
+        LOG(ERROR, "Error adding timerFd to epoll: %s\n",
+            strerror(errno));
+        return;
+    }
+
+    timerFdToProcess[timerFd] = process;
 }
 
 bool
@@ -870,9 +919,9 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
         }
     }
 
+    thread->process->totalCoresOwned--;
     thread->core->exclusiveThread = NULL;
     thread->core = NULL;
-    changeThreadState(thread, RUNNING_SHARED);
     exclusiveThreads.erase(thread);
 }
 
