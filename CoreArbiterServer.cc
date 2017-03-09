@@ -66,22 +66,22 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         }
 
         // Set up cpuset for all other processes. For now, core 0 is always
-        // shared.
-        std::string sharedCpusetPath = arbiterCpusetPath + "/Shared";
-        createCpuset(sharedCpusetPath, "0", "0");
+        // unmanaged.
+        std::string unmanagedCpusetPath = arbiterCpusetPath + "/Unmanaged";
+        createCpuset(unmanagedCpusetPath, "0", "0");
 
-        // Move all of the currently running processes to the shared cpuset
+        // Move all of the currently running processes to the unmanaged cpuset
         std::string allProcsPath = cpusetPath + "/cgroup.procs";
-        std::string sharedProcsPath = sharedCpusetPath + "/cgroup.procs";
-        moveProcsToCpuset(allProcsPath, sharedProcsPath);
+        std::string unmanagedProcsPath = unmanagedCpusetPath + "/cgroup.procs";
+        moveProcsToCpuset(allProcsPath, unmanagedProcsPath);
 
         // Cpusets should be set up properly now, so we'll save the files needed
         // for moving processes between cpusets
-        std::string sharedTasksPath = sharedCpusetPath + "/tasks";
-        sharedCore.id = 0;
-        sharedCore.cpusetFile.open(sharedTasksPath);
-        if (!sharedCore.cpusetFile.is_open()) {
-            LOG(ERROR, "Unable to open %s\n", sharedTasksPath.c_str());
+        std::string unmanagedTasksPath = unmanagedCpusetPath + "/tasks";
+        unmanagedCore.id = 0;
+        unmanagedCore.cpusetFile.open(unmanagedTasksPath);
+        if (!unmanagedCore.cpusetFile.is_open()) {
+            LOG(ERROR, "Unable to open %s\n", unmanagedTasksPath.c_str());
             exit(-1);
         }
     }
@@ -326,7 +326,8 @@ CoreArbiterServer::acceptConnection(int listenSocket)
                                                processIdToInfo[processId],
                                                socket);
     threadSocketToInfo[socket] = thread;
-    processIdToInfo[processId]->threadStateToSet[RUNNING_SHARED].insert(thread);
+    processIdToInfo[processId]->threadStateToSet[RUNNING_UNMANAGED]
+                                .insert(thread);
 
     LOG(NOTICE, "Registered thread with id %d on process %d\n",
            threadId, processId);
@@ -488,7 +489,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
     }
 
     LOG(NOTICE, "Core retrieval timer went off for process %d. Moving one of "
-                "its threads to the shared core.\n", process->id);
+                "its threads to the unmanaged core.\n", process->id);
 
     // Remove one of this process's threads from its exclusive core
     auto& exclusiveThreadSet = process->threadStateToSet[RUNNING_EXCLUSIVE];
@@ -901,20 +902,20 @@ void
 CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
 {
     if (!thread->core) {
-        LOG(WARNING, "Thread %d was already on shared core\n",
+        LOG(WARNING, "Thread %d was already on unmanaged core\n",
             thread->id);
     }
 
     if (!testingSkipCpusetAllocation) {
         // Writing a thread to a new cpuset automatically removes it from the
         // one it belonged to before
-        sharedCore.cpusetFile << thread->id;
-        sharedCore.cpusetFile.flush();
-        if (sharedCore.cpusetFile.bad()) {
+        unmanagedCore.cpusetFile << thread->id;
+        unmanagedCore.cpusetFile.flush();
+        if (unmanagedCore.cpusetFile.bad()) {
             // TODO: handle this elegantly. It shouldn't happen, so I'm killing
             // the server for now.
             LOG(ERROR, "Unable to write %d to cpuset file for core %lu",
-                thread->id, sharedCore.id);
+                thread->id, unmanagedCore.id);
             exit(-1);
         }
     }

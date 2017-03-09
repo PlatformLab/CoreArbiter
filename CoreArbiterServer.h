@@ -62,7 +62,7 @@ class CoreArbiterServer {
 
         // Voluntarily running on the unmanaged core (this only happens before
         // the first call to blockUntilCoreAvailable())
-        RUNNING_SHARED,
+        RUNNING_UNMANAGED,
 
         // Running on the unmanaged core because it was forceably preempted from
         // its excluisve core
@@ -71,7 +71,7 @@ class CoreArbiterServer {
         // Not running, waiting to be put on core
         BLOCKED
     };
-    
+
     struct ThreadInfo {
         pid_t id;
         struct ProcessInfo* process;
@@ -86,7 +86,7 @@ class CoreArbiterServer {
             , process(process)
             , socket(socket)
             , core(NULL)
-            , state(RUNNING_SHARED)
+            , state(RUNNING_UNMANAGED)
         {}
     };
 
@@ -157,7 +157,7 @@ class CoreArbiterServer {
 
     std::vector<struct CoreInfo> exclusiveCores;
     std::unordered_set<struct ThreadInfo*> exclusiveThreads;
-    struct CoreInfo sharedCore;
+    struct CoreInfo unmanagedCore;
 
     // The smallest index in the vector is the highest priority and the first
     // entry in the deque is the process that requested a core at that priority
