@@ -35,9 +35,9 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
                                      std::vector<core_t> exclusiveCoreIds)
     : socketPath(socketPath)
+    , listenSocket(-1)
     , sharedMemPathPrefix(sharedMemPathPrefix)
     , epollFd(-1)
-    , listenSocket(-1)
     , preemptionTimeout(RELEASE_TIMEOUT_MS)
     , exclusiveCores(exclusiveCoreIds.size())
     , corePriorityQueues(NUM_PRIORITIES)
@@ -291,7 +291,8 @@ CoreArbiterServer::acceptConnection(int listenSocket)
         // Our clients are not necessarily root
         sys->chmod(sharedMemPath.c_str(), 0777);
 
-        sys->ftruncate(sharedMemFd, sizeof(core_t));
+        size_t sharedMemSize = sizeof(core_t) + sizeof(bool);
+        sys->ftruncate(sharedMemFd, sharedMemSize);        
         core_t* coreReleaseRequestCount =
             (core_t *)sys->mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
                                  MAP_SHARED, sharedMemFd, 0);
@@ -300,7 +301,10 @@ CoreArbiterServer::acceptConnection(int listenSocket)
             // TODO: send error to client
             return;
         }
+        bool* threadPreempted = (bool*)(coreReleaseRequestCount + 1);
+        printf("%p %p\n", coreReleaseRequestCount, threadPreempted);
         *coreReleaseRequestCount = 0;
+        *threadPreempted = false;
 
         // Send location of shared memory to the application.
         // First in the packet is the size of the path, followed by the path
@@ -316,7 +320,7 @@ CoreArbiterServer::acceptConnection(int listenSocket)
 
         // Update process information since everything succeeded
         processIdToInfo[processId] = new ProcessInfo(
-            processId, sharedMemFd, coreReleaseRequestCount);
+            processId, sharedMemFd, coreReleaseRequestCount, threadPreempted);
 
         LOG(NOTICE, "Registered process with id %d on socket %d\n",
                processId, socket);
@@ -388,6 +392,9 @@ CoreArbiterServer::threadBlocking(int socket)
     }
 
     changeThreadState(thread, BLOCKED);
+    if (thread->process->threadStateToSet[RUNNING_PREEMPTED].empty()) {
+        *(process->threadPreempted) = false;
+    }
     if (shouldDistributeCores) {
         distributeCores();
     }
@@ -412,7 +419,6 @@ CoreArbiterServer::coresRequested(int socket)
     LOG(DEBUG, "\n");
 
     bool desiredCoresChanged = false;
-    process->totalCoresDesired = 0;
     core_t remainingCoresOwned = process->totalCoresOwned;
 
     for (size_t priority = 0; priority < NUM_PRIORITIES; priority++) {
@@ -423,7 +429,6 @@ CoreArbiterServer::coresRequested(int socket)
         remainingCoresOwned -= numCoresOwned;
 
         process->desiredCorePriorities[priority] = numCoresDesired;
-        process->totalCoresDesired += numCoresDesired;
 
         if (numCoresDesired != prevNumCoresDesired) {
             desiredCoresChanged = true;
@@ -470,7 +475,6 @@ CoreArbiterServer::countBlockedThreads(int socket)
 
     sendData(socket, &numBlockedThreads, sizeof(size_t),
              "Error sending number of blocked threads");
-
 }
 
 void
@@ -502,6 +506,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
     struct ThreadInfo* thread = *(exclusiveThreadSet.begin());
     removeThreadFromExclusiveCore(thread);
     changeThreadState(thread, RUNNING_PREEMPTED);
+    *(process->threadPreempted) = true;
 
     distributeCores();
 }
@@ -618,17 +623,22 @@ CoreArbiterServer::distributeCores()
                     continue;
                 }
 
-                auto& blockedThreads = process->threadStateToSet[BLOCKED];
-                if (!blockedThreads.empty()) {
+                // Prefer moving preempted threads back to their cores over
+                // blocked threads.
+                auto& threadSet = process->threadStateToSet[RUNNING_PREEMPTED];
+                if (threadSet.empty()) {
+                    threadSet = process->threadStateToSet[BLOCKED];
+                }
+                if (!threadSet.empty()) {
                     // Choose some blocked thread to put on a core
-                    struct ThreadInfo* thread = *(blockedThreads.begin());
+                    struct ThreadInfo* thread = *(threadSet.begin());
                     threadsToReceiveCores.push_back(thread);
                     processToCoreCount[process]++;
                     threadAdded = true;
 
                     // Temporarily remove the thread from the process's set of
                     // threads so that we don't double count it
-                    blockedThreads.erase(thread);
+                    threadSet.erase(thread);
 
                     if (threadsToReceiveCores.size() +
                             threadsAlreadyExclusive.size() ==

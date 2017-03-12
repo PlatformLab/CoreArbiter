@@ -146,18 +146,20 @@ TEST_F(CoreArbiterServerTest, threadBlocking) {
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, std::vector<core_t>());
-
+    bool threadPreempted = false;
     int processId = 1;
     int threadId = 2;
     int socket = 3;
     core_t coreReleaseRequestCount = 0;
-    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+
+    ProcessInfo process(processId, 0,
+                        &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo thread(threadId, &process, socket);
 
     // Nothing should happen because the server doesn't know about this thread
     // yet
     server.threadBlocking(socket);
-    ASSERT_EQ(thread.state, CoreArbiterServer::RUNNING_SHARED);
+    ASSERT_EQ(thread.state, CoreArbiterServer::RUNNING_UNMANAGED);
 
     // Add thread information to server
     server.threadSocketToInfo[socket] = &thread;
@@ -169,7 +171,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking) {
     ASSERT_EQ(thread.state, CoreArbiterServer::BLOCKED);
 
     // A thread running on the unmanaged core should always be able to block
-    thread.state = CoreArbiterServer::RUNNING_SHARED;
+    thread.state = CoreArbiterServer::RUNNING_UNMANAGED;
     server.threadBlocking(socket);
     ASSERT_EQ(thread.state, CoreArbiterServer::BLOCKED);
 
@@ -200,7 +202,9 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     pid_t threadId = 1;
     int socket = 2;
     core_t coreReleaseRequestCount = 1;
-    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+    bool threadPreempted = true;
+    ProcessInfo process(processId, 0,
+                        &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo thread(threadId, &process, socket);
     thread.state = CoreArbiterServer::RUNNING_PREEMPTED;
     thread.process = &process;
@@ -209,6 +213,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     // A preempted thread blocking counts as releasing a core
     server.threadBlocking(socket);
     ASSERT_EQ(process.coreReleaseCount, 1);
+    ASSERT_EQ(threadPreempted, false);
     ASSERT_EQ(thread.state, CoreArbiterServer::BLOCKED);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
@@ -227,7 +232,9 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     int socket1 = 3;
     int socket2 = 4;
     core_t coreReleaseRequestCount = 1;
-    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+    bool threadPreempted = false;
+    ProcessInfo process(processId, 0,
+                        &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo thread1(threadId1, &process, socket1);
     ThreadInfo thread2(threadId2, &process, socket2);
     CoreInfo* core = &server.exclusiveCores[0];
@@ -263,8 +270,10 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     int processId = 1;
     int threadId = 2;
     core_t coreReleaseRequestCount = 0;
+    bool threadPreempted = false;
 
-    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+    ProcessInfo process(processId, 0,
+                        &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo thread(threadId, &process, serverSocket);
     server.threadSocketToInfo[serverSocket] = &thread;
     server.processIdToInfo[processId] = &process;
@@ -274,7 +283,6 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     std::vector<core_t> coreRequest = {1, 1, 1, 1, 1, 1, 1, 1};
     send(clientSocket, &coreRequest[0], sizeof(core_t) * 8, 0);
     server.coresRequested(serverSocket);
-    ASSERT_EQ(process.totalCoresDesired, (core_t)coreRequest.size());
     ASSERT_EQ(coreReleaseRequestCount, 0);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 1u);
@@ -286,7 +294,6 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     coreRequest = {2, 2, 2, 2, 2, 2, 2, 2};
     send(clientSocket, &coreRequest[0], sizeof(core_t) * 8, 0);
     server.coresRequested(serverSocket);
-    ASSERT_EQ(process.totalCoresDesired, 16);
     ASSERT_EQ(coreReleaseRequestCount, 0);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 1u);
@@ -298,7 +305,6 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     coreRequest = {2, 2, 2, 2, 1, 1, 1, 1};
     send(clientSocket, &coreRequest[0], sizeof(core_t) * 8, 0);
     server.coresRequested(serverSocket);
-    ASSERT_EQ(process.totalCoresDesired, 12);
     ASSERT_EQ(coreReleaseRequestCount, 0);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 1u);
@@ -311,7 +317,6 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     coreRequest = {0, 0, 0, 0, 0, 0, 0, 0};
     send(clientSocket, &coreRequest[0], sizeof(core_t) * 8, 0);
     server.coresRequested(serverSocket);
-    ASSERT_EQ(process.totalCoresDesired, 0);
     ASSERT_EQ(coreReleaseRequestCount, 4);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 0u);
@@ -329,7 +334,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     std::vector<ProcessInfo> processes(2);
     std::vector<ThreadInfo> threads(4);
     setupProcessesAndThreads(server, processes, threads,
-                             CoreArbiterServer::RUNNING_SHARED);
+                             CoreArbiterServer::RUNNING_UNMANAGED);
 
     server.corePriorityQueues[7].push_back(&processes[0]);
     server.corePriorityQueues[7].push_back(&processes[1]);
@@ -433,7 +438,9 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
     pid_t processId = 1;
     pid_t threadId = 2;
     core_t coreReleaseRequestCount = 0;
-    ProcessInfo process(processId, 0, &coreReleaseRequestCount);
+    bool threadPreempted = false;
+    ProcessInfo process(processId, 0,
+                        &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo thread(threadId, &process, serverSocket);
     CoreInfo* core = &server.exclusiveCores[0];
     thread.state = CoreArbiterServer::RUNNING_EXCLUSIVE;

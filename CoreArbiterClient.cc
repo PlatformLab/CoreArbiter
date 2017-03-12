@@ -125,6 +125,16 @@ CoreArbiterClient::shouldReleaseCore()
 }
 
 /**
+ * Returns true if this process has a thread that was previously running
+ * exclusively but was moved to the unmanaged core.
+ */
+bool
+CoreArbiterClient::threadPreempted()
+{
+    return *threadPreemptedPtr;
+}
+
+/**
  * This method should be called by a thread that wants to run exclusively on a
  * core. It blocks the thread and does not return until it has been placed on a
  * core. In general it is safe to call blockUntilCoreAvailable() before
@@ -285,14 +295,14 @@ CoreArbiterClient::createNewServerConnection()
             LOG(ERROR, "%s\n", err.c_str());
             throw ClientException(err);
         }
-        int pagesize = getpagesize();
         coreReleaseRequestCount = (core_t*)sys->mmap(
-            NULL, pagesize, PROT_READ, MAP_SHARED, sharedMemFd, 0);
-        if (coreReleaseRequestCount == (core_t*)(-1)) {
+            NULL, getpagesize(), PROT_READ, MAP_SHARED, sharedMemFd, 0);
+        if (coreReleaseRequestCount == MAP_FAILED) {
             std::string err = "mmap failed: " + std::string(strerror(errno));
             LOG(ERROR, "%s\n", err.c_str());
             throw ClientException(err);
         }
+        threadPreemptedPtr = (bool*)(coreReleaseRequestCount + 1);
     }
 
     LOG(NOTICE, "Successfully registered process %d, thread %d with server.\n",

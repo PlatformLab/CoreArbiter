@@ -53,6 +53,7 @@ class CoreArbiterClient {
 
     void setNumCores(std::vector<core_t>& numCores);
     bool shouldReleaseCore();
+    bool threadPreempted();
     core_t blockUntilCoreAvailable();
     core_t getOwnedCoreCount();
     size_t getNumBlockedThreads();
@@ -82,6 +83,8 @@ class CoreArbiterClient {
     // requested that this process release in the client object's lifetime. It
     // is incremented by the server; the client should only read its value.
     core_t* coreReleaseRequestCount;
+
+    bool* threadPreemptedPtr;
 
     // A monotonically increasing count of the number of cores this process has
     // released back to the server (by calling blockUntilCoreAvailable()). It

@@ -149,6 +149,8 @@ class CoreArbiterServer {
         // write access.
         core_t* coreReleaseRequestCount;
 
+        bool* threadPreempted;
+
         // A monotonically increasing counter of the number of cores this
         // process has owned and then released.
         core_t coreReleaseCount;
@@ -156,9 +158,6 @@ class CoreArbiterServer {
         // The number of cores that this process currently has threads running
         // exclusively on (at all priority levels).
         core_t totalCoresOwned;
-
-        // TODO: remove this. It's not actually used anymore.
-        core_t totalCoresDesired;
 
         // How many cores this process desires at each priority level. Smaller
         // indexes mean higher priority.
@@ -170,17 +169,17 @@ class CoreArbiterServer {
 
         ProcessInfo()
             : totalCoresOwned(0)
-            , totalCoresDesired(0)
             , desiredCorePriorities(NUM_PRIORITIES)
         {}
 
-        ProcessInfo(pid_t id, int sharedMemFd, core_t* coreReleaseRequestCount)
+        ProcessInfo(pid_t id, int sharedMemFd, core_t* coreReleaseRequestCount,
+                    bool* threadPreempted)
             : id(id)
             , sharedMemFd(sharedMemFd)
             , coreReleaseRequestCount(coreReleaseRequestCount)
+            , threadPreempted(threadPreempted)
             , coreReleaseCount(0)
             , totalCoresOwned(0)
-            , totalCoresDesired(0)
             , desiredCorePriorities(NUM_PRIORITIES)
         {}
     };
