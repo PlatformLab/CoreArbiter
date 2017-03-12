@@ -13,32 +13,35 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <stdio.h>
 #include <thread>
-#include <vector>
+#include <atomic>
 
 #include "CoreArbiterClient.h"
+#include "Logger.h"
 
-int main(int argc, const char** argv) {
-    CoreArbiter::CoreArbiterClient& client =
-        CoreArbiter::CoreArbiterClient::getInstance("/tmp/CoreArbiter/testsocket");
+using namespace CoreArbiter;
 
-    int numThreads = 2;
-    std::vector<std::thread> threads(numThreads);
-    for (int i = 0; i < numThreads; i++) {
-        threads[i] = std::thread([&client] {
-            sleep(1);
-            client.blockUntilCoreAvailable();
-            printf("running on core %d\n", sched_getcpu());
-        });
-    }
+#define NUM_TRIALS 100
 
-    std::vector<core_t> coresRequested(NUM_PRIORITIES);
-    coresRequested[0] = 2;
-    client.setNumCores(coresRequested);
+/**
+  * This thread will get unblocked when a core is allocated, and will block
+  * itself again when the number of cores is decreased.
+  */
+void coreExec(CoreArbiterClient& client) {    
+    std::vector<uint32_t> oneCoreRequest = {1,0,0,0,0,0,0,0};
+    client.setNumCores(oneCoreRequest);
+    printf("There are %lu cores available\n", client.getTotalAvailableCores());
+    client.blockUntilCoreAvailable();
+    printf("There are %lu cores available\n", client.getTotalAvailableCores());
+}
 
-    for (auto& t : threads) {
-      t.join();
-    }
+int main(){
+    Logger::setLogLevel(DEBUG);
+    CoreArbiterClient& client =
+        CoreArbiterClient::getInstance("/tmp/CoreArbiter/testsocket");
+    std::thread coreThread(coreExec, std::ref(client));
 
-    return 0;
+    coreThread.join();
+    printf("There are %lu cores available\n", client.getTotalAvailableCores());
 }
