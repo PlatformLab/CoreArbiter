@@ -51,12 +51,12 @@ class CoreArbiterClient {
 
     ~CoreArbiterClient();
 
-    void setNumCores(std::vector<core_t>& numCores);
+    void setNumCores(std::vector<uint32_t>& numCores);
     bool shouldReleaseCore();
     bool threadPreempted();
     core_t blockUntilCoreAvailable();
-    core_t getOwnedCoreCount();
-    size_t getNumBlockedThreads();
+    uint32_t getOwnedCoreCount();
+    uint32_t getNumBlockedThreads();
 
     // Meant for testing, not general use
     size_t getTotalAvailableCores();
@@ -85,18 +85,18 @@ class CoreArbiterClient {
     // A monotonically increasing count of the number of cores the server has
     // requested that this process release in the client object's lifetime. It
     // is incremented by the server; the client should only read its value.
-    core_t* coreReleaseRequestCount;
+    uint64_t* coreReleaseRequestCount;
 
     bool* threadPreemptedPtr;
 
     // A monotonically increasing count of the number of cores this process has
     // released back to the server (by calling blockUntilCoreAvailable()). It
     // is incremented by the client.
-    core_t coreReleaseCount;
+    uint64_t coreReleaseCount;
 
     // The number of cores that this processes currently owns, i.e. the number
     // of threads that it has running exclusively on cores.
-    core_t ownedCoreCount;
+    uint32_t ownedCoreCount;
 
     // The path to the socket that the CoreArbiterServer is listening on.
     std::string serverSocketPath;

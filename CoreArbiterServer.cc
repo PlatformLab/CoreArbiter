@@ -294,10 +294,10 @@ CoreArbiterServer::acceptConnection(int listenSocket)
         // Our clients are not necessarily root
         sys->chmod(sharedMemPath.c_str(), 0777);
 
-        size_t sharedMemSize = sizeof(core_t) + sizeof(bool);
+        size_t sharedMemSize = sizeof(uint64_t) + sizeof(bool);
         sys->ftruncate(sharedMemFd, sharedMemSize);        
-        core_t* coreReleaseRequestCount =
-            (core_t *)sys->mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
+        uint64_t* coreReleaseRequestCount =
+            (uint64_t *)sys->mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
                                  MAP_SHARED, sharedMemFd, 0);
         if (coreReleaseRequestCount == MAP_FAILED) {
             LOG(ERROR, "Error on mmap: %s\n", strerror(errno));
@@ -406,8 +406,8 @@ CoreArbiterServer::threadBlocking(int socket)
 void
 CoreArbiterServer::coresRequested(int socket)
 {
-    core_t numCoresArr[NUM_PRIORITIES];
-    if (!readData(socket, &numCoresArr, sizeof(core_t) * NUM_PRIORITIES,
+    uint32_t numCoresArr[NUM_PRIORITIES];
+    if (!readData(socket, &numCoresArr, sizeof(uint32_t) * NUM_PRIORITIES,
                  "Error receiving number of cores requested")) {
         return;
     }
@@ -417,18 +417,18 @@ CoreArbiterServer::coresRequested(int socket)
 
     LOG(DEBUG, "Received core request from process %d:", process->id);
     for (size_t i = 0; i < NUM_PRIORITIES; i++) {
-        LOG(DEBUG, " %lu", numCoresArr[i]);
+        LOG(DEBUG, " %u", numCoresArr[i]);
     }
     LOG(DEBUG, "\n");
 
     bool desiredCoresChanged = false;
-    core_t remainingCoresOwned = process->totalCoresOwned;
+    uint32_t remainingCoresOwned = process->totalCoresOwned;
 
     for (size_t priority = 0; priority < NUM_PRIORITIES; priority++) {
         // Update information for a single priority
-        core_t prevNumCoresDesired = process->desiredCorePriorities[priority];
-        core_t numCoresDesired = numCoresArr[priority];
-        core_t numCoresOwned = std::min(remainingCoresOwned, numCoresDesired);
+        uint32_t prevNumCoresDesired = process->desiredCorePriorities[priority];
+        uint32_t numCoresDesired = numCoresArr[priority];
+        uint32_t numCoresOwned = std::min(remainingCoresOwned, numCoresDesired);
         remainingCoresOwned -= numCoresOwned;
 
         process->desiredCorePriorities[priority] = numCoresDesired;
@@ -471,12 +471,13 @@ CoreArbiterServer::countBlockedThreads(int socket)
     }
 
     struct ProcessInfo* process = threadSocketToInfo[socket]->process;
-    size_t numBlockedThreads = process->threadStateToSet[BLOCKED].size();
+    uint32_t numBlockedThreads =
+        (uint32_t)process->threadStateToSet[BLOCKED].size();
     LOG(NOTICE,
-        "Process %d has requested its number of blocked threads (%lu)\n",
+        "Process %d has requested its number of blocked threads (%u)\n",
         process->id, numBlockedThreads);
 
-    sendData(socket, &numBlockedThreads, sizeof(size_t),
+    sendData(socket, &numBlockedThreads, sizeof(uint32_t),
              "Error sending number of blocked threads");
 }
 
@@ -590,7 +591,7 @@ CoreArbiterServer::distributeCores()
         // A running count of how many cores we have assigned to a process at
         // this priority. This makes it easy to ensure that we don't assign
         // more cores to a process than it has requested.
-        std::unordered_map<struct ProcessInfo*, core_t> processToCoreCount;
+        std::unordered_map<struct ProcessInfo*, uint32_t> processToCoreCount;
 
         // Any threads that are already exclusive should remain so at this
         // priority.

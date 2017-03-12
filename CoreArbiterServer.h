@@ -147,21 +147,21 @@ class CoreArbiterServer {
         // with coreReleaseCount to determine whether the process owes a core.
         // This value is only incremented by the server; nobody else should have
         // write access.
-        core_t* coreReleaseRequestCount;
+        uint64_t* coreReleaseRequestCount;
 
         bool* threadPreempted;
 
         // A monotonically increasing counter of the number of cores this
         // process has owned and then released.
-        core_t coreReleaseCount;
+        uint64_t coreReleaseCount;
 
         // The number of cores that this process currently has threads running
         // exclusively on (at all priority levels).
-        core_t totalCoresOwned;
+        uint32_t totalCoresOwned;
 
         // How many cores this process desires at each priority level. Smaller
         // indexes mean higher priority.
-        std::vector<core_t> desiredCorePriorities;
+        std::vector<uint32_t> desiredCorePriorities;
 
         // A map of ThreadState to the threads this process owns in that state.
         std::unordered_map<ThreadState, std::unordered_set<struct ThreadInfo*>,
@@ -172,8 +172,8 @@ class CoreArbiterServer {
             , desiredCorePriorities(NUM_PRIORITIES)
         {}
 
-        ProcessInfo(pid_t id, int sharedMemFd, core_t* coreReleaseRequestCount,
-                    bool* threadPreempted)
+        ProcessInfo(pid_t id, int sharedMemFd,
+                    uint64_t* coreReleaseRequestCount, bool* threadPreempted)
             : id(id)
             , sharedMemFd(sharedMemFd)
             , coreReleaseRequestCount(coreReleaseRequestCount)

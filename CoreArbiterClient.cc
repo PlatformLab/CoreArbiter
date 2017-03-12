@@ -83,7 +83,7 @@ CoreArbiterClient::~CoreArbiterClient()
  *     higher priority.
  */
 void
-CoreArbiterClient::setNumCores(std::vector<core_t>& numCores)
+CoreArbiterClient::setNumCores(std::vector<uint32_t>& numCores)
 {
     if (numCores.size() != NUM_PRIORITIES) {
         std::string err = "Core request must have " +
@@ -101,7 +101,7 @@ CoreArbiterClient::setNumCores(std::vector<core_t>& numCores)
     sendData(serverSocket, &coreRequestMsg, sizeof(uint8_t),
              "Error sending core request prefix");
 
-    sendData(serverSocket, &numCores[0], sizeof(core_t) * NUM_PRIORITIES,
+    sendData(serverSocket, &numCores[0], sizeof(uint32_t) * NUM_PRIORITIES,
              "Error sending core request priorities");
 }
 
@@ -185,7 +185,7 @@ CoreArbiterClient::blockUntilCoreAvailable()
  * Returns the number of threads this process owns that are running exclusively
  * on a core.
  */
-core_t
+uint32_t
 CoreArbiterClient::getOwnedCoreCount()
 {
     Lock lock(mutex);
@@ -196,7 +196,7 @@ CoreArbiterClient::getOwnedCoreCount()
  * Returns the number of threads belonging to this process that are currently
  * blocked waiting on a core.
  */
-size_t
+uint32_t
 CoreArbiterClient::getNumBlockedThreads()
 {
     if (serverSocket < 0) {
@@ -208,11 +208,11 @@ CoreArbiterClient::getNumBlockedThreads()
     sendData(serverSocket, &countBlockedThreadsMsg, sizeof(uint8_t),
              "Error sending count blocked threads request");
 
-    size_t numCoresBlocked;
-    readData(serverSocket, &numCoresBlocked, sizeof(size_t),
+    uint32_t numCoresBlocked;
+    readData(serverSocket, &numCoresBlocked, sizeof(uint32_t),
              "Error receiving number of blocked cores from server");
 
-    LOG(NOTICE, "Server replied that there are %lu blocked threads\n",
+    LOG(NOTICE, "Server replied that there are %u blocked threads\n",
         numCoresBlocked);
     return numCoresBlocked;
 }
@@ -315,7 +315,7 @@ CoreArbiterClient::createNewServerConnection()
             LOG(ERROR, "%s\n", err.c_str());
             throw ClientException(err);
         }
-        coreReleaseRequestCount = (core_t*)sys->mmap(
+        coreReleaseRequestCount = (size_t*)sys->mmap(
             NULL, getpagesize(), PROT_READ, MAP_SHARED, sharedMemFd, 0);
         if (coreReleaseRequestCount == MAP_FAILED) {
             std::string err = "mmap failed: " + std::string(strerror(errno));

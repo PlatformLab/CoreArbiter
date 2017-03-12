@@ -30,7 +30,7 @@ class CoreArbiterClientTest : public ::testing::Test {
     std::string memPath;
     int clientSocket;
     int serverSocket;
-    core_t coreReleaseRequestCount;
+    uint64_t coreReleaseRequestCount;
 
     CoreArbiterClient client;
 
@@ -72,12 +72,12 @@ class CoreArbiterClientTest : public ::testing::Test {
 
 TEST_F(CoreArbiterClientTest, setNumCores_invalidRequest) {
     // Core request vector too small
-    std::vector<core_t> coreRequestTooFew(NUM_PRIORITIES - 1);
+    std::vector<uint32_t> coreRequestTooFew(NUM_PRIORITIES - 1);
     ASSERT_THROW(client.setNumCores(coreRequestTooFew),
                  CoreArbiterClient::ClientException);
 
     // Core request vector too large
-    std::vector<core_t> coreRequestTooMany(NUM_PRIORITIES + 1);
+    std::vector<uint32_t> coreRequestTooMany(NUM_PRIORITIES + 1);
     ASSERT_THROW(client.setNumCores(coreRequestTooMany),
                  CoreArbiterClient::ClientException);
 }
@@ -87,7 +87,7 @@ TEST_F(CoreArbiterClientTest, setNumCores_establishConnection) {
     disconnectClient();
 
     ASSERT_EQ(client.serverSocket, -1);
-    std::vector<core_t> coreRequest(NUM_PRIORITIES);
+    std::vector<uint32_t> coreRequest(NUM_PRIORITIES);
     // This isn't going to work because the client's socket is set to an
     // invalid file descriptor for testing
     ASSERT_THROW(client.setNumCores(coreRequest),
@@ -98,8 +98,8 @@ TEST_F(CoreArbiterClientTest, setNumCores_establishConnection) {
 }
 
 TEST_F(CoreArbiterClientTest, setNumCores) {
-    std::vector<core_t> coreRequest(NUM_PRIORITIES);
-    for (int i = 0; i < NUM_PRIORITIES; i++) {
+    std::vector<uint32_t> coreRequest(NUM_PRIORITIES);
+    for (uint32_t i = 0; i < NUM_PRIORITIES; i++) {
         coreRequest[i] = i;
     }
 
@@ -111,10 +111,10 @@ TEST_F(CoreArbiterClientTest, setNumCores) {
     recv(serverSocket, &msgType, sizeof(msgType), 0);
     ASSERT_EQ(msgType, CORE_REQUEST);
 
-    core_t requestArr[NUM_PRIORITIES];
+    uint32_t requestArr[NUM_PRIORITIES];
     recv(serverSocket, requestArr, sizeof(requestArr), 0);
     
-    for (int i = 0; i < NUM_PRIORITIES; i++) {
+    for (uint32_t i = 0; i < NUM_PRIORITIES; i++) {
         ASSERT_EQ(requestArr[i], i);
     }
 }
@@ -159,15 +159,15 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 
     // Thread should not be allowed to block
     EXPECT_EQ(client.blockUntilCoreAvailable(), 1);
-    EXPECT_EQ(client.ownedCoreCount, 1);
+    EXPECT_EQ(client.ownedCoreCount, 1u);
 
     // This time thread should block because it owes the server a core
     coreReleaseRequestCount++;
     core_t coreId = 2;
     send(serverSocket, &coreId, sizeof(core_t), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
-    EXPECT_EQ(client.coreReleaseCount, 1);
-    EXPECT_EQ(client.ownedCoreCount, 1);
+    EXPECT_EQ(client.coreReleaseCount, 1u);
+    EXPECT_EQ(client.ownedCoreCount, 1u);
 
     uint8_t blockMsg;
     recv(serverSocket, &blockMsg, sizeof(uint8_t), 0);
@@ -176,7 +176,7 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 
 TEST_F(CoreArbiterClientTest, getOwnedCoreCount) {
     client.ownedCoreCount = 99;
-    EXPECT_EQ(client.getOwnedCoreCount(), 99);
+    EXPECT_EQ(client.getOwnedCoreCount(), 99u);
 }
 
 }
