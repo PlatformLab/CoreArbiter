@@ -58,6 +58,9 @@ class CoreArbiterClient {
     core_t getOwnedCoreCount();
     size_t getNumBlockedThreads();
 
+    // Meant for testing, not general use
+    size_t getTotalAvailableCores();
+
     class ClientException: public std::runtime_error {
       public:
         ClientException(std::string err) : runtime_error(err) {}

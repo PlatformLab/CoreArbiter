@@ -217,6 +217,26 @@ CoreArbiterClient::getNumBlockedThreads()
     return numCoresBlocked;
 }
 
+size_t
+CoreArbiterClient::getTotalAvailableCores()
+{
+    if (serverSocket < 0) {
+        createNewServerConnection();
+    }
+
+    uint8_t totalAvailableCoresMsg = TOTAL_AVAILABLE_CORES;
+    sendData(serverSocket, &totalAvailableCoresMsg, sizeof(uint8_t),
+             "Error sending total available cores request");
+
+    size_t totalAvailableCores;
+    readData(serverSocket, &totalAvailableCores, sizeof(size_t),
+             "Error receiving number of available cores from server");
+
+    LOG(NOTICE, "Server replied that there are %lu available cores\n",
+        totalAvailableCores);
+    return totalAvailableCores;
+}
+
 // -- private methods
 
 /**

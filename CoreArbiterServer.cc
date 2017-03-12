@@ -231,6 +231,9 @@ void CoreArbiterServer::handleEvents()
                 case COUNT_BLOCKED_THREADS:
                     countBlockedThreads(socket);
                     break;
+                case TOTAL_AVAILABLE_CORES:
+                    totalAvailableCores(socket);
+                    break;
                 default:
                     LOG(ERROR, "Unknown message type: %u\n", msgType);
                     break;
@@ -742,6 +745,20 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
     }
 
     timerFdToProcess[timerFd] = process;
+}
+
+void
+CoreArbiterServer::totalAvailableCores(int socket)
+{
+    size_t availableCoreCount = 0;
+    for (struct CoreInfo& core : exclusiveCores) {
+        if (!core.exclusiveThread) {
+            availableCoreCount++;
+        }
+    }
+    LOG(NOTICE, "There are %lu available cores\n", availableCoreCount);
+    sendData(socket, &availableCoreCount, sizeof(size_t),
+             "Error sending available core count\n");
 }
 
 bool

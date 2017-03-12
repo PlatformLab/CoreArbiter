@@ -193,6 +193,7 @@ class CoreArbiterServer {
     void cleanupConnection(int socket);
     void distributeCores();
     void requestCoreRelease(struct CoreInfo* core);
+    void totalAvailableCores(int socket);
 
     bool readData(int socket, void* buf, size_t numBytes, std::string err);
     bool sendData(int socket, void* buf, size_t numBytes, std::string err);
