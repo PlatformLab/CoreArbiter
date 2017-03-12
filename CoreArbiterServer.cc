@@ -530,7 +530,14 @@ CoreArbiterServer::cleanupConnection(int socket)
         thread->core->exclusiveThread = NULL;
     }
 
-    if (process->threadStateToSet.empty()) {
+    bool noRemainingThreads = true;
+    for (auto& kv : process->threadStateToSet) {
+        if (!kv.second.empty()) {
+            noRemainingThreads = false;
+            break;
+        }
+    }
+    if (noRemainingThreads) {
         LOG(NOTICE, "All of process %d's threads have exited. Removing all "
             "process records\n", process->id);
         sys->close(process->sharedMemFd);
