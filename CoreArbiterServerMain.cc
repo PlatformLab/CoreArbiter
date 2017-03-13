@@ -16,12 +16,9 @@
 #include "CoreArbiterServer.h"
 
 int main() {
-    std::vector<core_t> cores;
-    cores.push_back(1);
-    cores.push_back(2);
     CoreArbiter::CoreArbiterServer server("/tmp/CoreArbiter/testsocket",
                                           "/tmp/CoreArbiter/testmem",
-                                          cores);
+                                          {1, 2});
     server.startArbitration();
     return 0;
 }

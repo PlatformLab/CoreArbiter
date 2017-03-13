@@ -50,6 +50,8 @@ class CoreArbiterServerTest : public ::testing::Test {
         socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
         clientSocket = fd[0];
         serverSocket = fd[1];
+
+        CoreArbiterServer::testingSkipMemoryDeallocation = true;
     }
 
     ~CoreArbiterServerTest()
@@ -143,7 +145,7 @@ TEST_F(CoreArbiterServerTest, constructor_epollCtlError) {
 }
 
 TEST_F(CoreArbiterServerTest, endArbitration) {
-    CoreArbiterServer server(socketPath, memPath, {1,2});
+    CoreArbiterServer server(socketPath, memPath, {1,2}, false);
     std::thread arbitrationThread([&] {
         server.startArbitration();
     });
@@ -151,12 +153,22 @@ TEST_F(CoreArbiterServerTest, endArbitration) {
     arbitrationThread.join();
 }
 
+TEST_F(CoreArbiterServerTest, defaultCores) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+
+    CoreArbiterServer server(socketPath, memPath, {}, false);
+    ASSERT_EQ(server.exclusiveCores.size(),
+              std::thread::hardware_concurrency() - 1);
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+}
+
 TEST_F(CoreArbiterServerTest, threadBlocking) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
-    CoreArbiterServer server(socketPath, memPath, {});
+    CoreArbiterServer server(socketPath, memPath, {}, false);
     bool threadPreempted = false;
     int processId = 1;
     int threadId = 2;
@@ -209,7 +221,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1});
+    CoreArbiterServer server(socketPath, memPath, {1}, false);
 
     pid_t processId = 0;
     pid_t threadId = 1;
@@ -239,7 +251,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2});
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
 
     pid_t processId = 0;
     pid_t threadId1 = 1;
@@ -252,7 +264,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
                         &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo thread1(threadId1, &process, socket1);
     ThreadInfo thread2(threadId2, &process, socket2);
-    CoreInfo* core = &server.exclusiveCores[0];
+    CoreInfo* core = server.exclusiveCores[0];
     thread1.state = CoreArbiterServer::RUNNING_EXCLUSIVE;
     thread2.state = CoreArbiterServer::RUNNING_PREEMPTED;
     thread1.core = core;
@@ -282,7 +294,7 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
-    CoreArbiterServer server(socketPath, memPath, {});
+    CoreArbiterServer server(socketPath, memPath, {}, false);
 
     int processId = 1;
     int threadId = 2;
@@ -349,7 +361,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSend = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2, 3});
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, false);
     std::vector<ProcessInfo> processes(2);
     std::vector<ThreadInfo> threads(4);
     setupProcessesAndThreads(server, processes, threads,
@@ -360,8 +372,8 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
 
     server.distributeCores();
     ASSERT_TRUE(server.exclusiveThreads.empty());
-    for (CoreInfo& core : server.exclusiveCores) {
-        ASSERT_EQ(core.exclusiveThread, (ThreadInfo*)NULL);
+    for (CoreInfo* core : server.exclusiveCores) {
+        ASSERT_EQ(core->exclusiveThread, (ThreadInfo*)NULL);
     }
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
@@ -372,7 +384,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSend = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2});
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
 
     // Set up two processes who each want two cores at the lowest priority
     std::vector<ProcessInfo> processes(2);
@@ -390,9 +402,9 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     ASSERT_EQ(processes[0].totalCoresOwned, 1u);
     ASSERT_EQ(processes[1].totalCoresOwned, 1u);
     std::unordered_map<CoreInfo*, ThreadInfo*> savedCoreToThread;
-    for (CoreInfo& core : server.exclusiveCores) {
-        ASSERT_TRUE(core.exclusiveThread != NULL);
-        savedCoreToThread[&core] = core.exclusiveThread;
+    for (CoreInfo* core : server.exclusiveCores) {
+        ASSERT_TRUE(core->exclusiveThread != NULL);
+        savedCoreToThread[core] = core->exclusiveThread;
     }
 
     // Threads already running exclusively are given priority over blocked ones
@@ -401,15 +413,15 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     ASSERT_EQ(server.exclusiveThreads.size(), 2u);
     ASSERT_EQ(processes[0].totalCoresOwned, 1u);
     ASSERT_EQ(processes[1].totalCoresOwned, 1u);
-    for (CoreInfo& core : server.exclusiveCores) {
-        ASSERT_EQ(core.exclusiveThread, savedCoreToThread[&core]);
+    for (CoreInfo* core : server.exclusiveCores) {
+        ASSERT_EQ(core->exclusiveThread, savedCoreToThread[core]);
     }
 
     // Don't give processes more cores at this priority than they've asked for
-    ThreadInfo* removedThread = server.exclusiveCores[0].exclusiveThread;
+    ThreadInfo* removedThread = server.exclusiveCores[0]->exclusiveThread;
     removedThread->process->desiredCorePriorities[7] = 0;
     server.exclusiveThreads.erase(removedThread);
-    server.exclusiveCores[0].exclusiveThread = NULL;
+    server.exclusiveCores[0]->exclusiveThread = NULL;
     server.distributeCores();
     ProcessInfo* otherProcess = removedThread->process == &processes[0] ?
         &processes[1] : &processes[0];
@@ -424,7 +436,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSend = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4});
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4}, false);
     std::vector<ProcessInfo> processes(2);
     std::vector<ThreadInfo> threads(8);
     setupProcessesAndThreads(server, processes, threads,
@@ -458,7 +470,7 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSend = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1});
+    CoreArbiterServer server(socketPath, memPath, {1}, false);
 
     pid_t processId = 1;
     pid_t threadId = 2;
@@ -467,7 +479,7 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
     ProcessInfo process(processId, 0,
                         &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo thread(threadId, &process, serverSocket);
-    CoreInfo* core = &server.exclusiveCores[0];
+    CoreInfo* core = server.exclusiveCores[0];
     thread.state = CoreArbiterServer::RUNNING_EXCLUSIVE;
     thread.core = core;
     core->exclusiveThread = &thread;

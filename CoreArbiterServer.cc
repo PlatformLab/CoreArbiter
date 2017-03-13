@@ -32,22 +32,62 @@ Syscall* CoreArbiterServer::sys = &defaultSyscall;
 bool CoreArbiterServer::testingSkipCpusetAllocation = false;
 bool CoreArbiterServer::testingSkipCoreDistribution = false;
 bool CoreArbiterServer::testingSkipSend = false;
+bool CoreArbiterServer::testingSkipMemoryDeallocation = false;
 
+/**
+ * Constructs a CoreArbiterServer object and sets up all necessary state for
+ * server operation. This includes creating a socket to listen for new
+ * connections on the socket path and creating subdirectories in the
+ * /sys/fs/cgroup/cpuset directory for each exclusive core ID given. Creating
+ * a new server will delete all cpuset state left over from a previous server.
+ * The server must be run as root; this constraint is enforced before any
+ * state in the filesystem is established.
+ *
+ * If the optional arbitrateImmediately flag is set, this constructor will not
+ * return. Instead, the server will immediately start listening for client
+ * connections and arbitrating between them.
+ *
+ * \param socketPath
+ *     The path at which to create a socket that will listen for client
+ *     connections
+ * \param sharedMemPathPrefix
+ *     The filename prefix to use for creating shared memory files. There is
+ *     a separate shared memory file for each process connected to the server.
+ * \param exclusiveCoreIds
+ *     A vector of core IDs that the server will arbitrate between. If this
+ *     parameter is not provided, or if an empty vector is provided, the server
+ *     will automatically allocate all cores except core 0 as exclusive. We
+ *     assume that all cores on a system are sequentially numbered starting at
+ *     0. Currently, core 0 is always left as an unmanaged core. It should never
+ *     be passed as an element of exclusiveCoreIds.
+ * \param arbitrateImmediately
+ *     If true, the server will begin arbitrating after a successful
+ *     construction
+ */
 CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
-                                     std::vector<core_t> exclusiveCoreIds)
+                                     std::vector<core_t> exclusiveCoreIds,
+                                     bool arbitrateImmediately)
     : socketPath(socketPath)
     , listenSocket(-1)
     , sharedMemPathPrefix(sharedMemPathPrefix)
     , epollFd(-1)
     , preemptionTimeout(RELEASE_TIMEOUT_MS)
-    , exclusiveCores(exclusiveCoreIds.size())
     , corePriorityQueues(NUM_PRIORITIES)
     , terminationFd(eventfd(0, 0))
 {
     if (sys->geteuid()) {
         LOG(ERROR, "The core arbiter server must be run as root\n");
         exit(-1);
+    }
+
+    // If exclusiveCoreIds is empty, populate it with everything except
+    // core 0
+    unsigned numCores = std::thread::hardware_concurrency();
+    if (exclusiveCoreIds.empty()) {
+        for (core_t id = 1; id < numCores; id++) {
+            exclusiveCoreIds.push_back(id);
+        }
     }
 
     std::string arbiterCpusetPath = cpusetPath + "/CoreArbiter";
@@ -58,9 +98,9 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         // Create a new cpuset directory for core arbitration. Since this is
         // going to be a parent of all the arbiter's individual core cpusets, it
         // needs to include every core.
-        unsigned numCores = std::thread::hardware_concurrency();
         std::string allCores = "0-" + std::to_string(numCores - 1);
         createCpuset(arbiterCpusetPath, allCores, "0");
+
         // Set up exclusive cores
         for (core_t core : exclusiveCoreIds) {
             std::string exclusiveCpusetPath =
@@ -89,21 +129,21 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         }
     }
 
-    for (size_t i = 0; i < exclusiveCoreIds.size(); i++) {
-        core_t coreId = exclusiveCoreIds[i];
+    for (core_t coreId : exclusiveCoreIds) {
         std::string exclusiveTasksPath = arbiterCpusetPath + "/Exclusive" +
                                          std::to_string(coreId) + "/tasks";
 
-        struct CoreInfo* coreInfo = &exclusiveCores[i];
-        coreInfo->id = coreId;
+        struct CoreInfo* core = new CoreInfo(coreId);
 
         if (!testingSkipCpusetAllocation) {
-            coreInfo->cpusetFile.open(exclusiveTasksPath);
-            if (!coreInfo->cpusetFile.is_open()) {
+            core->cpusetFile.open(exclusiveTasksPath);
+            if (!core->cpusetFile.is_open()) {
                 LOG(ERROR, "Unable to open %s\n", exclusiveTasksPath.c_str());
                 exit(-1);
             }
         }
+
+        exclusiveCores.push_back(core);
     }
 
     ensureParents(socketPath.c_str(), 0777);
@@ -174,10 +214,32 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                 terminationFd, strerror(errno));
         exit(-1);
     }
+
+    if (arbitrateImmediately) {
+        startArbitration();
+    }
 }
 
 CoreArbiterServer::~CoreArbiterServer()
 {
+    if (!testingSkipMemoryDeallocation) {
+        for (struct CoreInfo* core : exclusiveCores) {
+            core->cpusetFile.close();
+            delete core;
+        }
+
+        for (auto& proccessIdAndInfo : processIdToInfo) {
+            struct ProcessInfo* process = proccessIdAndInfo.second;
+            for (auto& threadStateAndSet : process->threadStateToSet) {
+                auto& threadSet = threadStateAndSet.second;
+                for (struct ThreadInfo* thread : threadSet) {
+                    delete thread;
+                }
+            }
+            delete process;
+        }
+    }
+
     sys->close(listenSocket);
     sys->close(terminationFd);
     if (remove(socketPath.c_str()) != 0) {
@@ -341,7 +403,6 @@ CoreArbiterServer::acceptConnection(int listenSocket)
             return;
         }
         bool* threadPreempted = (bool*)(coreReleaseRequestCount + 1);
-        printf("%p %p\n", coreReleaseRequestCount, threadPreempted);
         *coreReleaseRequestCount = 0;
         *threadPreempted = false;
 
@@ -711,7 +772,7 @@ CoreArbiterServer::distributeCores()
     // Assign cores to threads
     for (size_t i = 0; i < exclusiveCores.size() &&
          !threadsToReceiveCores.empty(); i++) {
-        struct CoreInfo* core = &exclusiveCores[i];
+        struct CoreInfo* core = exclusiveCores[i];
 
         if (!core->exclusiveThread) {
             // This core is available. Give it to a thread not already on
@@ -796,8 +857,8 @@ void
 CoreArbiterServer::totalAvailableCores(int socket)
 {
     size_t availableCoreCount = 0;
-    for (struct CoreInfo& core : exclusiveCores) {
-        if (!core.exclusiveThread) {
+    for (struct CoreInfo* core : exclusiveCores) {
+        if (core->exclusiveThread) {
             availableCoreCount++;
         }
     }

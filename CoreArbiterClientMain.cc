@@ -34,6 +34,8 @@ void coreExec(CoreArbiterClient& client) {
     printf("There are %lu cores available\n", client.getTotalAvailableCores());
     client.blockUntilCoreAvailable();
     printf("There are %lu cores available\n", client.getTotalAvailableCores());
+
+    client.unregisterThread();
 }
 
 int main(){

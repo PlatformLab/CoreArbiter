@@ -37,7 +37,8 @@ class CoreArbiterServer {
   public:
     CoreArbiterServer(std::string socketPath,
                       std::string sharedMemPathPrefix,
-                      std::vector<core_t> exclusiveCores);
+                      std::vector<core_t> exclusiveCores={},
+                      bool arbitrateImmediately=true);
     ~CoreArbiterServer();
     void startArbitration();
     void endArbitration();
@@ -67,6 +68,11 @@ class CoreArbiterServer {
 
         CoreInfo()
             : exclusiveThread(NULL)
+        {}
+
+        CoreInfo(core_t id)
+            : id(id)
+            , exclusiveThread(NULL)
         {}
     };
 
@@ -238,7 +244,7 @@ class CoreArbiterServer {
 
     // Contains the information for all the exclusive cores that this server
     // manages. This is set up upon server construction and does not change.
-    std::vector<struct CoreInfo> exclusiveCores;
+    std::vector<struct CoreInfo*> exclusiveCores;
 
     // A set of the threads currently running on cores in exclusiveCores.
     std::unordered_set<struct ThreadInfo*> exclusiveThreads;
@@ -266,6 +272,7 @@ class CoreArbiterServer {
     static bool testingSkipCpusetAllocation;
     static bool testingSkipCoreDistribution;
     static bool testingSkipSend;
+    static bool testingSkipMemoryDeallocation;
 };
 
 }
