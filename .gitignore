@@ -29,3 +29,5 @@
 *.app
 client
 server
+tests/CoreArbiterClientTest
+tests/CoreArbiterServerTest
