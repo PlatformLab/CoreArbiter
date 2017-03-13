@@ -259,7 +259,7 @@ class MockSyscall : public Syscall {
     int mmapErrno;
     void* mmap(void* addr, size_t length, int prot, int flags, int fd,
                off_t offset) {
-        if (mmapErrno != 0) {
+        if (mmapErrno == 0) {
             return ::mmap(addr, length, prot, flags, fd, offset);
         }
         errno = mmapErrno;
