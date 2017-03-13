@@ -671,20 +671,21 @@ CoreArbiterServer::distributeCores()
 
                 // Prefer moving preempted threads back to their cores over
                 // blocked threads.
-                auto& threadSet = process->threadStateToSet[RUNNING_PREEMPTED];
-                if (threadSet.empty()) {
-                    threadSet = process->threadStateToSet[BLOCKED];
+                std::unordered_set<struct ThreadInfo*>* threadSet =
+                    &(process->threadStateToSet[RUNNING_PREEMPTED]);
+                if (threadSet->empty()) {
+                    threadSet = &(process->threadStateToSet[BLOCKED]);
                 }
-                if (!threadSet.empty()) {
+                if (!threadSet->empty()) {
                     // Choose some blocked thread to put on a core
-                    struct ThreadInfo* thread = *(threadSet.begin());
+                    struct ThreadInfo* thread = *(threadSet->begin());
                     threadsToReceiveCores.push_back(thread);
                     processToCoreCount[process]++;
                     threadAdded = true;
 
                     // Temporarily remove the thread from the process's set of
                     // threads so that we don't double count it
-                    threadSet.erase(thread);
+                    threadSet->erase(thread);
 
                     if (threadsToReceiveCores.size() +
                             threadsAlreadyExclusive.size() ==
