@@ -9,7 +9,7 @@ server: CoreArbiterServer.o CoreArbiterServerMain.o mkdir_p.o Logger.o
 client:  CoreArbiterClientMain.o libCoreArbiter.a
 	$(CC) $(LDFLAGS) -pthread -o $@ $^
 
-libCoreArbiter.a: CoreArbiterClient.o Logger.o
+libCoreArbiter.a: CoreArbiterClient.o CoreArbiterServer.o mkdir_p.o Logger.o
 	ar rcs $@ $^	
 
 test: CoreArbiterServer.o
