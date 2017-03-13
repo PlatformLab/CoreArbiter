@@ -31,6 +31,7 @@ static Syscall defaultSyscall;
 Syscall* CoreArbiterServer::sys = &defaultSyscall;
 bool CoreArbiterServer::testingSkipCpusetAllocation = false;
 bool CoreArbiterServer::testingSkipCoreDistribution = false;
+bool CoreArbiterServer::testingSkipSend = false;
 
 CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
@@ -722,7 +723,7 @@ CoreArbiterServer::distributeCores()
                    core->id, thread->id, thread->process->id);
             moveThreadToExclusiveCore(thread, core);
 
-            if (!testingSkipCpusetAllocation) {
+            if (!testingSkipSend) {
                 // Wake up the thread
                 if (!sendData(thread->socket, &core->id, sizeof(core_t),
                               "Error sending core ID to thread " +

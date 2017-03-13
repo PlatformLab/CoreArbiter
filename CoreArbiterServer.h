@@ -265,6 +265,7 @@ class CoreArbiterServer {
     // Used for testing to avoid unnecessary setup and code execution.
     static bool testingSkipCpusetAllocation;
     static bool testingSkipCoreDistribution;
+    static bool testingSkipSend;
 };
 
 }

@@ -153,6 +153,7 @@ TEST_F(CoreArbiterServerTest, endArbitration) {
 
 TEST_F(CoreArbiterServerTest, threadBlocking) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {});
@@ -199,11 +200,13 @@ TEST_F(CoreArbiterServerTest, threadBlocking) {
     ASSERT_EQ(thread.state, CoreArbiterServer::BLOCKED);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {1});
@@ -227,11 +230,13 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     ASSERT_EQ(thread.state, CoreArbiterServer::BLOCKED);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2});
@@ -268,11 +273,13 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     ASSERT_EQ(process.totalCoresOwned, 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {});
@@ -334,11 +341,13 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     }
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3});
     std::vector<ProcessInfo> processes(2);
@@ -356,10 +365,12 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     }
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2});
 
@@ -406,10 +417,12 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     ASSERT_EQ(otherProcess->totalCoresOwned, 2u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4});
     std::vector<ProcessInfo> processes(2);
@@ -438,10 +451,12 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     ASSERT_EQ(coreReleaseRequestCount, 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
 }
 
 TEST_F(CoreArbiterServerTest, preemptCore) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSend = true;
 
     CoreArbiterServer server(socketPath, memPath, {1});
 
@@ -476,5 +491,6 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
     ASSERT_EQ(process.totalCoresOwned, 0u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSend = false;
 }
 }
