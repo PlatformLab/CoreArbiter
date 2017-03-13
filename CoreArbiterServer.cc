@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <iostream>
 #include <sys/un.h>
+#include <sys/eventfd.h>
 #include <thread>
 
 #include "CoreArbiterServer.h"
@@ -41,6 +42,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     , preemptionTimeout(RELEASE_TIMEOUT_MS)
     , exclusiveCores(exclusiveCoreIds.size())
     , corePriorityQueues(NUM_PRIORITIES)
+    , terminationFd(eventfd(0, 0))
 {
     if (sys->geteuid()) {
         LOG(ERROR, "The core arbiter server must be run as root\n");
@@ -159,11 +161,24 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                 listenSocket, strerror(errno));
         exit(-1);
     }
+
+    // Add the termination fd to allow us to return from epoll_wait.
+    struct epoll_event terminationEvent;
+    terminationEvent.events = EPOLLIN;
+    terminationEvent.data.fd = terminationFd;
+    if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, terminationFd,
+                       &terminationEvent) < 0) {
+        sys->close(terminationFd);
+        LOG(ERROR, "Error adding terminationFd %d to epoll: %s\n",
+                terminationFd, strerror(errno));
+        exit(-1);
+    }
 }
 
 CoreArbiterServer::~CoreArbiterServer()
 {
     sys->close(listenSocket);
+    sys->close(terminationFd);
     if (remove(socketPath.c_str()) != 0) {
         LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
     }
@@ -176,18 +191,31 @@ CoreArbiterServer::~CoreArbiterServer()
 void
 CoreArbiterServer::startArbitration()
 {
-    while (true) {
-        handleEvents();
+    while (handleEvents()) { }
+}
+
+void
+CoreArbiterServer::endArbitration()
+{
+    uint64_t terminate = 0xdeadbeef;
+    ssize_t ret = sys->write(terminationFd, &terminate, 8);
+    if (ret < 0) {
+        LOG(ERROR, "Error writing to terminationFd: %s\n", strerror(errno));
     }
 }
 
-void CoreArbiterServer::handleEvents()
+/**
+  * This is the top-level event handling method for the Core Arbiter Server.
+  * It returns true to indicate that event handling should continue and false
+  * to indicate that event handling should cease.
+  */
+bool CoreArbiterServer::handleEvents()
 {
     struct epoll_event events[MAX_EPOLL_EVENTS];
     int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS, -1);
     if (numFds < 0) {
         LOG(ERROR, "Error on epoll_wait: %s\n", strerror(errno));
-        return;
+        return true;
     }
 
     for (int i = 0; i < numFds; i++) {
@@ -208,7 +236,10 @@ void CoreArbiterServer::handleEvents()
             timeoutThreadPreemption(socket);
             sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
                            socket, &events[i]);
-        } else {
+        } else if (socket == terminationFd) {
+            return false;
+        }
+        else {
             // Thread is making some sort of request
             if (!(events[i].events & EPOLLIN)) {
                 LOG(WARNING, "Did not receive a message type.\n");
@@ -241,6 +272,7 @@ void CoreArbiterServer::handleEvents()
         }
     }
     LOG(NOTICE, "\n");
+    return true;
 }
 
 void

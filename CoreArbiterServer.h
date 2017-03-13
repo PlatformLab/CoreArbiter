@@ -40,6 +40,7 @@ class CoreArbiterServer {
                       std::vector<core_t> exclusiveCores);
     ~CoreArbiterServer();
     void startArbitration();
+    void endArbitration();
 
   private:
     struct ThreadInfo;
@@ -141,7 +142,7 @@ class CoreArbiterServer {
         // The file descriptor that is mmapped into memory for communication
         // between the process and server (see coreReleaseRequestCount below).
         int sharedMemFd;
-        
+
         // A monotonically increasing counter in shared memory of the number of
         // cores this process is expected to release. This value is compared
         // with coreReleaseCount to determine whether the process owes a core.
@@ -184,7 +185,7 @@ class CoreArbiterServer {
         {}
     };
 
-    void handleEvents();
+    bool handleEvents();
     void acceptConnection(int listenSocket);
     void threadBlocking(int socket);
     void coresRequested(int socket);
@@ -250,6 +251,10 @@ class CoreArbiterServer {
     // entry in the deque is the process that requested a core at that priority
     // first
     std::vector<std::deque<struct ProcessInfo*>> corePriorityQueues;
+
+    // When this file descriptor is written, the core arbiter will return from
+    // startArbitration.
+    volatile int terminationFd;
 
     // The path to the root cpuset directory.
     static std::string cpusetPath;

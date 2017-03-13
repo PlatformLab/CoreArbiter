@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <thread>
 #define private public
 
 #include "gtest/gtest.h"
@@ -139,6 +140,15 @@ TEST_F(CoreArbiterServerTest, constructor_epollCtlError) {
         CoreArbiterServer(socketPath, memPath, {}),
         "Error adding listenSocket .* to epoll:.*");
     sys->epollCtlErrno = 0;
+}
+
+TEST_F(CoreArbiterServerTest, endArbitration) {
+    CoreArbiterServer server(socketPath, memPath, {1,2});
+    std::thread arbitrationThread([&] {
+        server.startArbitration();
+    });
+    server.endArbitration();
+    arbitrationThread.join();
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking) {
@@ -467,5 +477,4 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
 }
-    
 }
