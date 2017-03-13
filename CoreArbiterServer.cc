@@ -214,7 +214,10 @@ bool CoreArbiterServer::handleEvents()
     struct epoll_event events[MAX_EPOLL_EVENTS];
     int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS, -1);
     if (numFds < 0) {
-        LOG(ERROR, "Error on epoll_wait: %s\n", strerror(errno));
+        // Interrupted system calls are normal, so there is no need to log them
+        // as errors.
+        if (errno != EINTR)
+            LOG(ERROR, "Error on epoll_wait: %s\n", strerror(errno));
         return true;
     }
 
