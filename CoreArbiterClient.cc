@@ -217,6 +217,27 @@ CoreArbiterClient::getNumBlockedThreads()
     return numCoresBlocked;
 }
 
+/**
+ * Tells the server that this thread no longer wishes to run on exclusive cores.
+ * This should always be called before a thread exits to ensure that the server
+ * doesn't keep stale threads on cores.
+ */
+void
+CoreArbiterClient::unregisterThread()
+{
+    if (serverSocket < 0) {
+        LOG(WARNING, "Cannot unregister a thread that was not previously "
+                     "registered\n");
+        return;
+    }
+
+    // Closing this socket alerts the server, which will clean up this thread's
+    // state
+    if (sys->close(serverSocket) < 0) {
+        LOG(ERROR, "Error closing socket: %s\n", strerror(errno));
+    }
+}
+
 size_t
 CoreArbiterClient::getTotalAvailableCores()
 {

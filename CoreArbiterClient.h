@@ -57,6 +57,7 @@ class CoreArbiterClient {
     core_t blockUntilCoreAvailable();
     uint32_t getOwnedCoreCount();
     uint32_t getNumBlockedThreads();
+    void unregisterThread();
 
     // Meant for testing, not general use
     size_t getTotalAvailableCores();
