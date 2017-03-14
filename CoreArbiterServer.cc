@@ -619,16 +619,27 @@ CoreArbiterServer::cleanupConnection(int socket)
     sys->close(socket);
     ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
+
+    // Remove thread from process's internal map of threads
     process->threadStateToSet[thread->state].erase(thread);
 
-    // Remove thread from map of threads
+    // Remove thread from global map of threads
     threadSocketToInfo.erase(thread->socket);
 
     if (thread->state == RUNNING_EXCLUSIVE) {
         exclusiveThreads.erase(thread);
         thread->core->exclusiveThread = NULL;
+        process->totalCoresOwned--;
+        if (process->coreReleaseCount < *(process->coreReleaseRequestCount)) {
+            process->coreReleaseCount++;
+        }
+    } else if (thread->state == RUNNING_PREEMPTED &&
+               process->threadStateToSet[RUNNING_PREEMPTED].empty()) {
+        *(process->threadPreempted) = false;
     }
 
+    // If there are no remaining threads in this process, also delete all
+    // process state
     bool noRemainingThreads = true;
     for (auto& kv : process->threadStateToSet) {
         if (!kv.second.empty()) {
