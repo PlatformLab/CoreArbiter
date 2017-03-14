@@ -512,11 +512,11 @@ CoreArbiterServer::coresRequested(int socket)
     struct ThreadInfo* thread = threadSocketToInfo[socket];
     struct ProcessInfo* process = thread->process;
 
-    LOG(DEBUG, "Received core request from process %d:", process->id);
+    LOG(NOTICE, "Received core request from process %d:", process->id);
     for (size_t i = 0; i < NUM_PRIORITIES; i++) {
-        LOG(DEBUG, " %u", numCoresArr[i]);
+        LOG(NOTICE, " %u", numCoresArr[i]);
     }
-    LOG(DEBUG, "\n");
+    LOG(NOTICE, "\n");
 
     bool desiredCoresChanged = false;
     uint32_t remainingCoresOwned = process->totalCoresOwned;
@@ -858,7 +858,7 @@ CoreArbiterServer::totalAvailableCores(int socket)
 {
     size_t availableCoreCount = 0;
     for (struct CoreInfo* core : exclusiveCores) {
-        if (core->exclusiveThread) {
+        if (!core->exclusiveThread) {
             availableCoreCount++;
         }
     }
