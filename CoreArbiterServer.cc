@@ -392,11 +392,12 @@ CoreArbiterServer::acceptConnection(int listenSocket)
         // Our clients are not necessarily root
         sys->chmod(sharedMemPath.c_str(), 0777);
 
-        size_t sharedMemSize = sizeof(uint64_t) + sizeof(bool);
+        size_t sharedMemSize = sizeof(std::atomic<uint64_t>) + sizeof(bool);
         sys->ftruncate(sharedMemFd, sharedMemSize);        
-        uint64_t* coreReleaseRequestCount =
-            (uint64_t *)sys->mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
-                                 MAP_SHARED, sharedMemFd, 0);
+        std::atomic<uint64_t>* coreReleaseRequestCount =
+            (std::atomic<uint64_t>*)sys->mmap(NULL, getpagesize(),
+                                              PROT_READ | PROT_WRITE,
+                                              MAP_SHARED, sharedMemFd, 0);
         if (coreReleaseRequestCount == MAP_FAILED) {
             LOG(ERROR, "Error on mmap: %s\n", strerror(errno));
             // TODO: send error to client

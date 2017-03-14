@@ -97,6 +97,12 @@ CoreArbiterClient::setNumCores(std::vector<uint32_t>& numCores)
         createNewServerConnection();
     }
 
+    LOG(NOTICE, "Core request:");
+    for (uint32_t num : numCores) {
+        LOG(NOTICE, " %u", num);
+    }
+    LOG(NOTICE, "\n");
+
     uint8_t coreRequestMsg = CORE_REQUEST;
     sendData(serverSocket, &coreRequestMsg, sizeof(uint8_t),
              "Error sending core request prefix");
@@ -106,22 +112,37 @@ CoreArbiterClient::setNumCores(std::vector<uint32_t>& numCores)
 }
 
 /**
- * Returns true if the server has requested that this process release a core
- * (which it can do by calling blockUntilCoreAvailable() on a thread running
- * exclusively on a core). This method should be called periodically. An
- * uncooperative process will have its threads moved to an unmanaged core after
- * RELEASE_TIMEOUT_MS milliseconds.
+ * Returns true if the server has requested that this client release a core. It
+ * will only return true once per core that should be released. The caller is
+ * obligated to ensure that some thread on an exclusive core calls
+ * blockUntilCoreAvailable() if this method returns true. This method should be
+ * called periodically, as the server will move an uncooperative process's
+ * threads to an unmanaged core after RELEASE_TIMEOUT_MS milliseconds.
  */
 bool
-CoreArbiterClient::shouldReleaseCore()
+CoreArbiterClient::mustReleaseCore()
 {
-    Lock lock(mutex);
     if (!coreReleaseRequestCount) {
         // This process hasn't established a connection with the server yet.
         return false;
     }
 
-    return *coreReleaseRequestCount - coreReleaseCount > 0;
+    // Do an initial check without the lock
+    if (coreReleaseCount + coreReleasePendingCount
+            >= *coreReleaseRequestCount) {
+        return false;
+    }
+
+    Lock lock(mutex);
+
+    // Check again now that we have the lock
+    if (coreReleaseCount + coreReleasePendingCount >=
+                *coreReleaseRequestCount) {
+        return false;
+    }
+
+    coreReleasePendingCount++;
+    return true;
 }
 
 /**
@@ -155,13 +176,17 @@ CoreArbiterClient::blockUntilCoreAvailable()
         // This thread currently has exclusive access to a core. We need to
         // check whether it should be blocking.
         Lock lock(mutex);
-        if (*coreReleaseRequestCount - coreReleaseCount == 0) {
+        if (coreReleaseCount == *coreReleaseRequestCount) {
             LOG(WARNING, "Not blocking thread %d because its process has not "
                 "been asked to give up a core\n", sys->gettid());
             return coreId;
         } else {
             coreReleaseCount++;
             ownedCoreCount--;
+
+            if (coreReleasePendingCount > 0) {
+                coreReleasePendingCount--;
+            }
         }
     }
 
@@ -336,7 +361,7 @@ CoreArbiterClient::createNewServerConnection()
             LOG(ERROR, "%s\n", err.c_str());
             throw ClientException(err);
         }
-        coreReleaseRequestCount = (size_t*)sys->mmap(
+        coreReleaseRequestCount = (std::atomic<uint64_t>*)sys->mmap(
             NULL, getpagesize(), PROT_READ, MAP_SHARED, sharedMemFd, 0);
         if (coreReleaseRequestCount == MAP_FAILED) {
             std::string err = "mmap failed: " + std::string(strerror(errno));

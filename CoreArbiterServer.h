@@ -16,6 +16,7 @@
 #ifndef CORE_ARBITER_SERVER_H_
 #define CORE_ARBITER_SERVER_H_
 
+#include <atomic>
 #include <deque>
 #include <fstream>
 #include <sys/types.h>
@@ -154,7 +155,7 @@ class CoreArbiterServer {
         // with coreReleaseCount to determine whether the process owes a core.
         // This value is only incremented by the server; nobody else should have
         // write access.
-        uint64_t* coreReleaseRequestCount;
+        std::atomic<uint64_t>* coreReleaseRequestCount;
 
         bool* threadPreempted;
 
@@ -180,7 +181,8 @@ class CoreArbiterServer {
         {}
 
         ProcessInfo(pid_t id, int sharedMemFd,
-                    uint64_t* coreReleaseRequestCount, bool* threadPreempted)
+                    std::atomic<uint64_t>* coreReleaseRequestCount,
+                    bool* threadPreempted)
             : id(id)
             , sharedMemFd(sharedMemFd)
             , coreReleaseRequestCount(coreReleaseRequestCount)

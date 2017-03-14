@@ -30,7 +30,7 @@ class CoreArbiterClientTest : public ::testing::Test {
     std::string memPath;
     int clientSocket;
     int serverSocket;
-    uint64_t coreReleaseRequestCount;
+    std::atomic<uint64_t> coreReleaseRequestCount;
 
     CoreArbiterClient client;
 
@@ -119,23 +119,25 @@ TEST_F(CoreArbiterClientTest, setNumCores) {
     }
 }
 
-TEST_F(CoreArbiterClientTest, shouldReleaseCore) {
+TEST_F(CoreArbiterClientTest, mustReleaseCore) {
     disconnectClient();
-    ASSERT_FALSE(client.shouldReleaseCore());
+    ASSERT_FALSE(client.mustReleaseCore());
 
     connectClient();
     coreReleaseRequestCount = 0;
 
-    ASSERT_FALSE(client.shouldReleaseCore());
+    ASSERT_FALSE(client.mustReleaseCore());
 
-    coreReleaseRequestCount += 2;
-    ASSERT_TRUE(client.shouldReleaseCore());
+    coreReleaseRequestCount++;
+    ASSERT_TRUE(client.mustReleaseCore());
+    ASSERT_EQ(client.coreReleasePendingCount, 1u);
+    
+    // Simulate a blockUntilCoreAvailable() call
+    client.coreReleaseCount++;
+    client.coreReleasePendingCount--;
 
     client.coreReleaseCount++;
-    ASSERT_TRUE(client.shouldReleaseCore());
-
-    client.coreReleaseCount++;
-    ASSERT_FALSE(client.shouldReleaseCore());
+    ASSERT_FALSE(client.mustReleaseCore());
 }
 
 TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_establishConnection) {
@@ -154,19 +156,30 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_establishConnection) {
 
 TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
     connectClient();
+    coreReleaseRequestCount = 0;
     client.coreId = 1;
     client.ownedCoreCount = 1;
+    client.coreReleasePendingCount = 0;
 
     // Thread should not be allowed to block
     EXPECT_EQ(client.blockUntilCoreAvailable(), 1);
     EXPECT_EQ(client.ownedCoreCount, 1u);
 
     // This time thread should block because it owes the server a core
-    coreReleaseRequestCount++;
+    coreReleaseRequestCount = 1;
     core_t coreId = 2;
     send(serverSocket, &coreId, sizeof(core_t), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
     EXPECT_EQ(client.coreReleaseCount, 1u);
+    EXPECT_EQ(client.coreReleasePendingCount, 0u);
+    EXPECT_EQ(client.ownedCoreCount, 1u);
+
+    // Same test, but this time with a pending release
+    coreReleaseRequestCount = 1;
+    send(serverSocket, &coreId, sizeof(core_t), 0);
+    EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
+    EXPECT_EQ(client.coreReleaseCount, 1u);
+    EXPECT_EQ(client.coreReleasePendingCount, 0u);
     EXPECT_EQ(client.ownedCoreCount, 1u);
 
     uint8_t blockMsg;

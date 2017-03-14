@@ -173,7 +173,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking) {
     int processId = 1;
     int threadId = 2;
     int socket = 3;
-    uint64_t coreReleaseRequestCount = 0;
+    std::atomic<uint64_t> coreReleaseRequestCount(0);
 
     ProcessInfo process(processId, 0,
                         &coreReleaseRequestCount, &threadPreempted);
@@ -226,7 +226,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     pid_t processId = 0;
     pid_t threadId = 1;
     int socket = 2;
-    uint64_t coreReleaseRequestCount = 1;
+    std::atomic<uint64_t> coreReleaseRequestCount(1);
     bool threadPreempted = true;
     ProcessInfo process(processId, 0,
                         &coreReleaseRequestCount, &threadPreempted);
@@ -258,7 +258,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     pid_t threadId2 = 2;
     int socket1 = 3;
     int socket2 = 4;
-    uint64_t coreReleaseRequestCount = 1;
+    std::atomic<uint64_t> coreReleaseRequestCount(1);
     bool threadPreempted = false;
     ProcessInfo process(processId, 0,
                         &coreReleaseRequestCount, &threadPreempted);
@@ -298,7 +298,7 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
 
     int processId = 1;
     int threadId = 2;
-    uint64_t coreReleaseRequestCount = 0;
+    std::atomic<uint64_t> coreReleaseRequestCount(0);
     bool threadPreempted = false;
 
     ProcessInfo process(processId, 0,
@@ -457,10 +457,17 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
 
     // Higher priority threads preempt lower priority threads
     highPriorityProcess->desiredCorePriorities[6] = 4;
-    uint64_t coreReleaseRequestCount = 0;
+    std::atomic<uint64_t> coreReleaseRequestCount(0);
     lowPriorityProcess->coreReleaseRequestCount = &coreReleaseRequestCount;
     server.distributeCores();
     ASSERT_EQ(coreReleaseRequestCount, 1u);
+    ASSERT_EQ(server.timerFdToProcess.size(), 1u);
+    ASSERT_EQ(highPriorityProcess->totalCoresOwned, 3u);
+
+    // Higher priority threads aren't placed on a core before the preempted
+    // thread has timed out
+    server.distributeCores();
+    ASSERT_EQ(highPriorityProcess->totalCoresOwned, 3u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSend = false;
@@ -474,7 +481,7 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
 
     pid_t processId = 1;
     pid_t threadId = 2;
-    uint64_t coreReleaseRequestCount = 0;
+    std::atomic<uint64_t> coreReleaseRequestCount(0);
     bool threadPreempted = false;
     ProcessInfo process(processId, 0,
                         &coreReleaseRequestCount, &threadPreempted);

@@ -16,6 +16,7 @@
 #ifndef CORE_ARBITER_CLIENT_H_
 #define CORE_ARBITER_CLIENT_H_
 
+#include <atomic>
 #include <sys/types.h>
 #include <iostream>
 #include <mutex>
@@ -52,7 +53,7 @@ class CoreArbiterClient {
     ~CoreArbiterClient();
 
     void setNumCores(std::vector<uint32_t>& numCores);
-    bool shouldReleaseCore();
+    bool mustReleaseCore();
     bool threadPreempted();
     core_t blockUntilCoreAvailable();
     uint32_t getOwnedCoreCount();
@@ -86,14 +87,18 @@ class CoreArbiterClient {
     // A monotonically increasing count of the number of cores the server has
     // requested that this process release in the client object's lifetime. It
     // is incremented by the server; the client should only read its value.
-    uint64_t* coreReleaseRequestCount;
+    std::atomic<uint64_t>* coreReleaseRequestCount;
 
     bool* threadPreemptedPtr;
 
     // A monotonically increasing count of the number of cores this process has
     // released back to the server (by calling blockUntilCoreAvailable()). It
     // is incremented by the client.
-    uint64_t coreReleaseCount;
+    std::atomic<uint64_t> coreReleaseCount;
+
+    // The number of cores that the client has been told it is obligated to
+    // release
+    std::atomic<uint64_t> coreReleasePendingCount;
 
     // The number of cores that this processes currently owns, i.e. the number
     // of threads that it has running exclusively on cores.
