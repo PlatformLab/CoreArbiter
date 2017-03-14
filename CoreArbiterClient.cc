@@ -83,7 +83,7 @@ CoreArbiterClient::~CoreArbiterClient()
  *     higher priority.
  */
 void
-CoreArbiterClient::setNumCores(std::vector<uint32_t>& numCores)
+CoreArbiterClient::setNumCores(std::vector<uint32_t> numCores)
 {
     if (numCores.size() != NUM_PRIORITIES) {
         std::string err = "Core request must have " +

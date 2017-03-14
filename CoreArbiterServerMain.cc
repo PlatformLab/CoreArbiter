@@ -18,7 +18,6 @@
 int main() {
     CoreArbiter::CoreArbiterServer server("/tmp/CoreArbiter/testsocket",
                                           "/tmp/CoreArbiter/testmem",
-                                          {1, 2});
-    server.startArbitration();
+                                          {1});
     return 0;
 }

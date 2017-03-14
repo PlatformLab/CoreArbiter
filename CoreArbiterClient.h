@@ -52,7 +52,7 @@ class CoreArbiterClient {
 
     ~CoreArbiterClient();
 
-    void setNumCores(std::vector<uint32_t>& numCores);
+    void setNumCores(std::vector<uint32_t> numCores);
     bool mustReleaseCore();
     bool threadPreempted();
     core_t blockUntilCoreAvailable();

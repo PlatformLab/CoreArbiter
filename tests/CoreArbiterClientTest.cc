@@ -72,13 +72,11 @@ class CoreArbiterClientTest : public ::testing::Test {
 
 TEST_F(CoreArbiterClientTest, setNumCores_invalidRequest) {
     // Core request vector too small
-    std::vector<uint32_t> coreRequestTooFew(NUM_PRIORITIES - 1);
-    ASSERT_THROW(client.setNumCores(coreRequestTooFew),
+    ASSERT_THROW(client.setNumCores({0}),
                  CoreArbiterClient::ClientException);
 
     // Core request vector too large
-    std::vector<uint32_t> coreRequestTooMany(NUM_PRIORITIES + 1);
-    ASSERT_THROW(client.setNumCores(coreRequestTooMany),
+    ASSERT_THROW(client.setNumCores({0,0,0,0,0,0,0,0,0}),
                  CoreArbiterClient::ClientException);
 }
 
@@ -87,10 +85,9 @@ TEST_F(CoreArbiterClientTest, setNumCores_establishConnection) {
     disconnectClient();
 
     ASSERT_EQ(client.serverSocket, -1);
-    std::vector<uint32_t> coreRequest(NUM_PRIORITIES);
     // This isn't going to work because the client's socket is set to an
     // invalid file descriptor for testing
-    ASSERT_THROW(client.setNumCores(coreRequest),
+    ASSERT_THROW(client.setNumCores({0,0,0,0,0,0,0,0}),
                  CoreArbiterClient::ClientException);
     ASSERT_EQ(client.serverSocket, 999);
 
@@ -98,13 +95,8 @@ TEST_F(CoreArbiterClientTest, setNumCores_establishConnection) {
 }
 
 TEST_F(CoreArbiterClientTest, setNumCores) {
-    std::vector<uint32_t> coreRequest(NUM_PRIORITIES);
-    for (uint32_t i = 0; i < NUM_PRIORITIES; i++) {
-        coreRequest[i] = i;
-    }
-
     connectClient();
-    client.setNumCores(coreRequest);
+    client.setNumCores({0, 1, 2, 3, 4, 5, 6, 7});
     client.serverSocket = -1;
 
     uint8_t msgType;

@@ -29,12 +29,10 @@ using namespace CoreArbiter;
   * itself again when the number of cores is decreased.
   */
 void coreExec(CoreArbiterClient& client) {    
-    std::vector<uint32_t> oneCoreRequest = {1,0,0,0,0,0,0,0};
-    client.setNumCores(oneCoreRequest);
-    printf("There are %lu cores available\n", client.getTotalAvailableCores());
+    client.setNumCores({1,0,0,0,0,0,0,0});
     client.blockUntilCoreAvailable();
-    printf("There are %lu cores available\n", client.getTotalAvailableCores());
-
+    client.setNumCores({0,0,0,0,0,0,0,0});
+    while (!client.mustReleaseCore());
     client.unregisterThread();
 }
 
