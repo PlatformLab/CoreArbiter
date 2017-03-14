@@ -122,14 +122,15 @@ CoreArbiterClient::setNumCores(std::vector<uint32_t> numCores)
 bool
 CoreArbiterClient::mustReleaseCore()
 {
-    if (!coreReleaseRequestCount) {
+    if (serverSocket < 0) {
         // This process hasn't established a connection with the server yet.
-        return false;
+        createNewServerConnection();
     }
 
     // Do an initial check without the lock
     if (coreReleaseCount + coreReleasePendingCount
             >= *coreReleaseRequestCount) {
+        LOG(DEBUG, "No core release requested\n");
         return false;
     }
 
@@ -138,10 +139,12 @@ CoreArbiterClient::mustReleaseCore()
     // Check again now that we have the lock
     if (coreReleaseCount + coreReleasePendingCount >=
                 *coreReleaseRequestCount) {
+        LOG(DEBUG, "No core release requested\n");
         return false;
     }
 
     coreReleasePendingCount++;
+    LOG(NOTICE, "Core release requested\n");
     return true;
 }
 

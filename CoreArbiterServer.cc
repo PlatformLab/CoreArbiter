@@ -550,6 +550,8 @@ CoreArbiterServer::coresRequested(int socket)
     if (remainingCoresOwned > 0) {
         // The application is voluntarily giving up cores, so we need to give
         // it permission to block threads.
+        LOG(NOTICE, "Process %d is voluntarily releasing %u cores\n",
+            process->id, remainingCoresOwned);
         *(process->coreReleaseRequestCount) += remainingCoresOwned;
     }
 
