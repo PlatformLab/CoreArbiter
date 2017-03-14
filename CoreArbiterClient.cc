@@ -123,7 +123,7 @@ bool
 CoreArbiterClient::mustReleaseCore()
 {
     if (serverSocket < 0) {
-        // This process hasn't established a connection with the server yet.
+        // This thread hasn't established a connection with the server yet.
         createNewServerConnection();
     }
 

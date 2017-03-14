@@ -112,12 +112,7 @@ TEST_F(CoreArbiterClientTest, setNumCores) {
 }
 
 TEST_F(CoreArbiterClientTest, mustReleaseCore) {
-    disconnectClient();
-    ASSERT_FALSE(client.mustReleaseCore());
-
     connectClient();
-    coreReleaseRequestCount = 0;
-
     ASSERT_FALSE(client.mustReleaseCore());
 
     coreReleaseRequestCount++;
