@@ -296,8 +296,8 @@ bool CoreArbiterServer::handleEvents()
         } else if (socket == listenSocket) {
             // A new thread is connecting
             acceptConnection(listenSocket);
-        } else if (timerFdToProcess.find(socket)
-                    != timerFdToProcess.end()) {
+        } else if (timerFdToProcessId.find(socket)
+                    != timerFdToProcessId.end()) {
             // Core retrieval timer timeout
             timeoutThreadPreemption(socket);
             sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
@@ -587,7 +587,14 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
     uint64_t time;
     read(timerFd, &time, sizeof(uint64_t));
 
-    struct ProcessInfo* process = timerFdToProcess[timerFd];
+    pid_t processId = timerFdToProcessId[timerFd];
+    if (processIdToInfo.find(processId) == processIdToInfo.end()) {
+        // This process is no longer registered with the server
+        LOG(NOTICE, "Core retrieval timer went off for process %d, which "
+                    "is no longer registered with the server", processId);
+        return;
+    }
+    struct ProcessInfo* process = processIdToInfo[processId];
 
     if (*(process->coreReleaseRequestCount) == process->coreReleaseCount) {
         // This process gave up the core it was supposed to
@@ -881,7 +888,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
         return;
     }
 
-    timerFdToProcess[timerFd] = process;
+    timerFdToProcessId[timerFd] = process->id;
 }
 
 void

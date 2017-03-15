@@ -232,7 +232,7 @@ class CoreArbiterServer {
 
     // A map of core preemption timers to the process that a core should be
     // retrieved from.
-    std::unordered_map<int, struct ProcessInfo*> timerFdToProcess;
+    std::unordered_map<int, pid_t> timerFdToProcessId;
 
     // The amount of time in milliseconds to wait before forceably preempting
     // a a thread from its exclusive core to the unmanaged core.

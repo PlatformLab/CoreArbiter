@@ -494,7 +494,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     lowPriorityProcess->coreReleaseRequestCount = &coreReleaseRequestCount;
     server.distributeCores();
     ASSERT_EQ(coreReleaseRequestCount, 1u);
-    ASSERT_EQ(server.timerFdToProcess.size(), 1u);
+    ASSERT_EQ(server.timerFdToProcessId.size(), 1u);
     ASSERT_EQ(highPriorityProcess->totalCoresOwned, 3u);
 
     // Higher priority threads aren't placed on a core before the preempted
@@ -511,36 +511,30 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
     CoreArbiterServer::testingSkipSend = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-
-    pid_t processId = 1;
-    pid_t threadId = 2;
-    std::atomic<uint64_t> coreReleaseRequestCount(0);
-    bool threadPreempted = false;
-    ProcessInfo process(processId, 0,
-                        &coreReleaseRequestCount, &threadPreempted);
-    ThreadInfo thread(threadId, &process, serverSocket);
-    CoreInfo* core = server.exclusiveCores[0];
-    thread.state = CoreArbiterServer::RUNNING_EXCLUSIVE;
-    thread.core = core;
-    core->exclusiveThread = &thread;
-    process.threadStateToSet[CoreArbiterServer::RUNNING_EXCLUSIVE]
-           .insert(&thread);
-    process.totalCoresOwned = 1;
     server.preemptionTimeout = 1; // For faster testing
 
+    std::atomic<uint64_t> coreReleaseRequestCount(0);
+    bool threadPreempted = false;
+    CoreInfo* core = server.exclusiveCores[0];
+
+    ProcessInfo* process = createProcess(
+        server, 1, &coreReleaseRequestCount, &threadPreempted);
+    ThreadInfo* thread = createThread(
+        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, core);
+
     // If the client is cooperative, nothing should happen
-    process.coreReleaseCount = 1;
+    process->coreReleaseCount = 1;
     server.requestCoreRelease(core);
     server.handleEvents();
-    ASSERT_EQ(thread.state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_EXCLUSIVE);
 
     // If client is uncooperative, the thread should be removed from its core
-    process.coreReleaseCount = 0;
+    process->coreReleaseCount = 0;
     server.requestCoreRelease(core);
     server.handleEvents();
-    ASSERT_EQ(thread.state, CoreArbiterServer::RUNNING_PREEMPTED);
+    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_PREEMPTED);
     ASSERT_EQ(core->exclusiveThread, (ThreadInfo*)NULL);
-    ASSERT_EQ(process.totalCoresOwned, 0u);
+    ASSERT_EQ(process->totalCoresOwned, 0u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSend = false;
@@ -557,11 +551,11 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     // one blocked
     std::atomic<uint64_t> coreReleaseRequestCount(2);
     bool threadPreempted = true;
-    CoreInfo core(1);
+    CoreInfo* core = server.exclusiveCores[0];
     ProcessInfo* process = createProcess(
         server, 1, &coreReleaseRequestCount, &threadPreempted);
     ThreadInfo* exclusiveThread = createThread(
-        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, &core);
+        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, core);
     ThreadInfo* preemptedThread = createThread(
         server, 2, process, 2, CoreArbiterServer::RUNNING_PREEMPTED);
     ThreadInfo* blockedThread = createThread(
@@ -574,7 +568,7 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
               server.threadSocketToInfo.end());
     ASSERT_EQ(server.exclusiveThreads.find(exclusiveThread),
               server.exclusiveThreads.end());
-    ASSERT_EQ(core.exclusiveThread, (ThreadInfo*)NULL);
+    ASSERT_EQ(core->exclusiveThread, (ThreadInfo*)NULL);
     ASSERT_EQ(process->totalCoresOwned, 0u);
     ASSERT_EQ(process->coreReleaseCount, 1u);
     ASSERT_TRUE(threadPreempted);
