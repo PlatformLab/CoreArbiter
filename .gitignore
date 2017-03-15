@@ -31,3 +31,6 @@ client
 server
 tests/CoreArbiterClientTest
 tests/CoreArbiterServerTest
+
+# Misc files
+tags
