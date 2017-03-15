@@ -550,7 +550,6 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
     // Prevent close calls since we're not using real sockets
-    // sys->closeErrno = 1;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
 
@@ -598,6 +597,5 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
-    sys->closeErrno = 1;
 }
 }
