@@ -85,6 +85,39 @@ class CoreArbiterServerTest : public ::testing::Test {
             }
         }
     }
+
+    /**
+     * The process that this method creates needs to be freed by the caller.
+     */
+    ProcessInfo* createProcess(CoreArbiterServer& server, pid_t processId,
+                               std::atomic<uint64_t>* coreReleaseRequestCount,
+                               bool* threadPreempted) {
+        ProcessInfo* process = new ProcessInfo(
+            processId, 0, coreReleaseRequestCount, threadPreempted);
+        server.processIdToInfo[processId] = process;
+        return process;
+    }
+
+    /**
+     * The thread that this method creates needs to be freed by the caller.
+     */
+    ThreadInfo* createThread(CoreArbiterServer& server, pid_t threadId,
+                             ProcessInfo* process, int socket,
+                             ThreadState state, CoreInfo* core=NULL) {
+        ThreadInfo* thread = new ThreadInfo(threadId, process, socket);
+        thread->state = state;
+        process->threadStateToSet[state].insert(thread);
+        server.threadSocketToInfo[socket] = thread;
+        if (state == CoreArbiterServer::RUNNING_EXCLUSIVE) {
+            server.exclusiveThreads.insert(thread);
+            process->totalCoresOwned++;
+            thread->core = core;
+            core->exclusiveThread = thread;
+        } else if (state == CoreArbiterServer::RUNNING_PREEMPTED) {
+            *(process->threadPreempted) = true;
+        }
+        return thread;
+    }
 };
 
 TEST_F(CoreArbiterServerTest, constructor_notRoot) {
@@ -511,5 +544,60 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSend = false;
+}
+
+TEST_F(CoreArbiterServerTest, cleanupConnection) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipCoreDistribution = true;
+    // Prevent close calls since we're not using real sockets
+    // sys->closeErrno = 1;
+
+    CoreArbiterServer server(socketPath, memPath, {1}, false);
+
+    // Set up a process with three threads: one exclusive, one preempted, and
+    // one blocked
+    std::atomic<uint64_t> coreReleaseRequestCount(2);
+    bool threadPreempted = true;
+    CoreInfo core(1);
+    ProcessInfo* process = createProcess(
+        server, 1, &coreReleaseRequestCount, &threadPreempted);
+    ThreadInfo* exclusiveThread = createThread(
+        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, &core);
+    ThreadInfo* preemptedThread = createThread(
+        server, 2, process, 2, CoreArbiterServer::RUNNING_PREEMPTED);
+    ThreadInfo* blockedThread = createThread(
+        server, 3, process, 3, CoreArbiterServer::BLOCKED);
+
+    server.cleanupConnection(exclusiveThread->socket);
+    ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_EXCLUSIVE]
+                         .empty());
+    ASSERT_EQ(server.threadSocketToInfo.find(1),
+              server.threadSocketToInfo.end());
+    ASSERT_EQ(server.exclusiveThreads.find(exclusiveThread),
+              server.exclusiveThreads.end());
+    ASSERT_EQ(core.exclusiveThread, (ThreadInfo*)NULL);
+    ASSERT_EQ(process->totalCoresOwned, 0u);
+    ASSERT_EQ(process->coreReleaseCount, 1u);
+    ASSERT_TRUE(threadPreempted);
+    ASSERT_EQ(server.processIdToInfo.size(), 1u);
+
+    server.cleanupConnection(preemptedThread->socket);
+    ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_PREEMPTED]
+                         .empty());
+    ASSERT_EQ(server.threadSocketToInfo.find(2),
+              server.threadSocketToInfo.end());
+    ASSERT_EQ(process->totalCoresOwned, 0u);
+    ASSERT_EQ(process->coreReleaseCount, 2u);
+    ASSERT_FALSE(threadPreempted);
+    ASSERT_EQ(server.processIdToInfo.size(), 1u);
+
+    server.cleanupConnection(blockedThread->socket);
+    ASSERT_EQ(server.threadSocketToInfo.find(3),
+              server.threadSocketToInfo.end());
+    ASSERT_EQ(server.processIdToInfo.size(), 0u);
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipCoreDistribution = false;
+    sys->closeErrno = 1;
 }
 }

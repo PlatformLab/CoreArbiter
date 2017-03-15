@@ -622,12 +622,16 @@ CoreArbiterServer::cleanupConnection(int socket)
     ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
 
-    // Remove thread from process's internal map of threads
-    process->threadStateToSet[thread->state].erase(thread);
+    LOG(NOTICE, "Cleaning up state for thread %d\n", thread->id);
 
-    // Remove thread from global map of threads
+    // We'll only distribute cores at the end if necessary
+    bool shouldDistributeCores = false;
+
+    // Remove thread from all maps
+    process->threadStateToSet[thread->state].erase(thread);
     threadSocketToInfo.erase(thread->socket);
 
+    // Update state pertaining to cores
     if (thread->state == RUNNING_EXCLUSIVE) {
         exclusiveThreads.erase(thread);
         thread->core->exclusiveThread = NULL;
@@ -635,9 +639,18 @@ CoreArbiterServer::cleanupConnection(int socket)
         if (process->coreReleaseCount < *(process->coreReleaseRequestCount)) {
             process->coreReleaseCount++;
         }
-    } else if (thread->state == RUNNING_PREEMPTED &&
-               process->threadStateToSet[RUNNING_PREEMPTED].empty()) {
-        *(process->threadPreempted) = false;
+        shouldDistributeCores = true;
+    } else if (thread->state == RUNNING_PREEMPTED) {
+        if (process->coreReleaseCount < *(process->coreReleaseRequestCount)) {
+            process->coreReleaseCount++;
+        } else {
+            LOG(WARNING, "Inconsistent state. Process %d has a preempted "
+                         "thread but does not owe a core\n", process->id);
+        }
+
+        if (process->threadStateToSet[RUNNING_PREEMPTED].empty()) {
+            *(process->threadPreempted) = false;
+        }
     }
 
     // If there are no remaining threads in this process, also delete all
@@ -671,6 +684,10 @@ CoreArbiterServer::cleanupConnection(int socket)
     }
 
     delete thread;
+
+    if (shouldDistributeCores) {
+        distributeCores();
+    }
 }
 
 void
