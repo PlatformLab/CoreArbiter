@@ -240,11 +240,20 @@ CoreArbiterServer::~CoreArbiterServer()
         }
     }
 
-    sys->close(listenSocket);
-    sys->close(terminationFd);
+    if (sys->close(listenSocket) < 0) {
+        LOG(ERROR, "Error closing listenSocket: %s\n", strerror(errno));
+    }
+    if (sys->close(epollFd) < 0) {
+        LOG(ERROR, "Error closing epollFd: %s\n", strerror(errno));
+    }
+    if (sys->close(terminationFd) < 0) {
+        LOG(ERROR, "Error closing terminationFd: %s\n", strerror(errno));
+    }
     if (remove(socketPath.c_str()) != 0) {
         LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
     }
+
+    removeOldCpusets(cpusetPath + "/CoreArbiter");
 }
 
 /**
@@ -336,8 +345,9 @@ bool CoreArbiterServer::handleEvents()
                     break;
             }
         }
+
+        LOG(NOTICE, "\n");
     }
-    LOG(NOTICE, "\n");
     return true;
 }
 
@@ -790,6 +800,7 @@ CoreArbiterServer::distributeCores()
                     if (threadsToReceiveCores.size() +
                             threadsAlreadyExclusive.size() ==
                                 exclusiveCores.size()) {
+                        LOG(NOTICE, "cores are filled\n");
                         coresFilled = true;
                         break;
                     }
@@ -1011,7 +1022,7 @@ CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
         return;
     }
 
-    // Iterate over all directories in the given path
+    // Remove all processes from a cpuset
     for (struct dirent* entry = sys->readdir(dir); entry != NULL;
          entry = sys->readdir(dir)) {
         
@@ -1019,11 +1030,26 @@ CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
             std::string dirName = arbiterCpusetPath + "/" +
                                   std::string(entry->d_name);
             std::string procsFilename = dirName + "/cgroup.procs";
-
-            // Remove all processes from this cpuset so we can delete it
             moveProcsToCpuset(procsFilename, procsDestFilename);
+        }
+    }
+
+    // We need to sleep here to give the kernel time to actually move processes
+    // into different cpusets. (Retrying doesn't work.)
+    usleep(750);
+    rewinddir(dir);
+
+    // Delete all CoreArbiter cpuset subdirectories
+    for (struct dirent* entry = sys->readdir(dir); entry != NULL;
+         entry = sys->readdir(dir)) {
+
+        if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
+            std::string dirName = arbiterCpusetPath + "/" +
+                                  std::string(entry->d_name);
+
+            LOG(NOTICE, "removing %s\n", dirName.c_str());
             if (sys->rmdir(dirName.c_str()) < 0) {
-                LOG(ERROR, "Eror on rmdir %s: %s\n",
+                LOG(ERROR, "Error on rmdir %s: %s\n",
                     dirName.c_str(), strerror(errno));
                 exit(-1);
             }
