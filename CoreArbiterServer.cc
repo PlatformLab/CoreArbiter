@@ -1141,13 +1141,42 @@ CoreArbiterServer::changeThreadState(struct ThreadInfo* thread,
     thread->process->threadStateToSet[state].insert(thread);
 }
 
-void signalHandler(int signal) {
-    CoreArbiterServer* mostRecentInstance = CoreArbiterServer::mostRecentInstance;
-    if (signal == SIGINT && mostRecentInstance != NULL) {
-        mostRecentInstance->endArbitration();
+/**
+  * This method attempts to attach gdb to the currently running process.
+  */
+void invokeGDB(int signum) {
+    char buf[256];
+    snprintf(buf, sizeof(buf), "/usr/bin/gdb -p %d",  getpid());
+    int ret = system(buf);
+
+    if (ret == -1) {
+        std::cerr << "Failed to attach gdb upon receiving the signal "
+            << strsignal(signum) << std::endl;
     }
 }
 
+void signalHandler(int signum) {
+    // Prevent repeated invocations
+    struct sigaction signalAction;
+    signalAction.sa_handler = SIG_DFL;
+    signalAction.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &signalAction, NULL);
+
+    // Process the signal
+    if (signum == SIGINT)  {
+        CoreArbiterServer* mostRecentInstance = CoreArbiterServer::mostRecentInstance;
+        if (mostRecentInstance != NULL) {
+            mostRecentInstance->endArbitration();
+        }
+    } else if (signum == SIGSEGV || signum == SIGABRT) {
+        invokeGDB(signum);
+    }
+}
+
+/**
+  * This method enables us to perform cleanup when we are interrupted, and drop
+  * into gdb immediately when we segfault.
+  */
 void
 CoreArbiterServer::installSignalHandler() {
     struct sigaction signalAction;
@@ -1155,8 +1184,10 @@ CoreArbiterServer::installSignalHandler() {
     signalAction.sa_flags = SA_RESTART;
     if (sigaction(SIGINT, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGINT");
+    if (sigaction(SIGSEGV, &signalAction, NULL) != 0)
+        LOG(ERROR, "Couldn't set signal handler for SIGSEGV");
+    if (sigaction(SIGABRT, &signalAction, NULL) != 0)
+        LOG(ERROR, "Couldn't set signal handler for SIGABRT");
 }
 
 }
-
-
