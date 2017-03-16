@@ -1,24 +1,24 @@
 GTEST_DIR=../googletest/googletest
-CLIENT_BINS=CoreArbiterClientTest.o ../CoreArbiterClient.o ../Logger.o ../mkdir_p.o
-SERVER_BINS=CoreArbiterServerTest.o ../CoreArbiterServer.o ../Logger.o ../mkdir_p.o
+CLIENT_BINS=CoreArbiterClientTest.o
+SERVER_BINS=CoreArbiterServerTest.o
 CXXFLAGS=-std=c++11 -O3 -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -g
-INCLUDE=-I.. -I../../PerfUtils -I${GTEST_DIR}/include
-LIBS=-L../ -L../../PerfUtils -L./ -lPerfUtils -lgtest -pthread
+INCLUDE=-I.. -I${GTEST_DIR}/include
+LIBS=-L../ -L./ -lCoreArbiter  -lgtest -pthread
 
 run: CoreArbiterServerTest CoreArbiterClientTest
 	sudo ./CoreArbiterServerTest
 	./CoreArbiterClientTest
 
-CoreArbiterServerTest: $(SERVER_BINS)
-	g++ $(CXXFLAGS) $^ $(GTEST_DIR)/src/gtest_main.cc $(LIBS) -o $@
+CoreArbiterServerTest: $(SERVER_BINS) libgtest.a ../libCoreArbiter.a
+	g++ $(CXXFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(LIBS) -o $@
 
-CoreArbiterClientTest: $(CLIENT_BINS)
-	g++ $(CXXFLAGS) $^ $(GTEST_DIR)/src/gtest_main.cc $(LIBS) -o $@
+CoreArbiterClientTest: $(CLIENT_BINS) libgtest.a ../libCoreArbiter.a
+	g++ $(CXXFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(LIBS) -o $@
 
-$(SERVER_BINS) : %.o : %.cc libgtest.a
+$(SERVER_BINS) : %.o : %.cc
 	g++ -c $(CXXFLAGS) $< $(INCLUDE) -o $@
 
-$(CLIENT_BINS) : %.o : %.cc libgtest.a
+$(CLIENT_BINS) : %.o : %.cc
 	g++ -c $(CXXFLAGS) $< $(INCLUDE) -o $@
 
 libgtest.a:
