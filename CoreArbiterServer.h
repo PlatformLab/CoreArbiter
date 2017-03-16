@@ -30,7 +30,7 @@
 #include "CoreArbiterCommon.h"
 #include "Syscall.h"
 
-#define MAX_EPOLL_EVENTS 100
+#define MAX_EPOLL_EVENTS 1000
 
 namespace CoreArbiter {
 

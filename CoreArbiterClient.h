@@ -57,10 +57,10 @@ class CoreArbiterClient {
     bool threadPreempted();
     core_t blockUntilCoreAvailable();
     uint32_t getOwnedCoreCount();
-    uint32_t getNumBlockedThreads();
     void unregisterThread();
 
     // Meant for testing, not general use
+    uint32_t getNumBlockedThreads();
     size_t getTotalAvailableCores();
 
     class ClientException: public std::runtime_error {

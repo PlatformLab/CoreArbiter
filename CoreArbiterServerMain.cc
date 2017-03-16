@@ -14,10 +14,14 @@
  */
 
 #include "CoreArbiterServer.h"
+#include "Logger.h"
+
+using namespace CoreArbiter;
 
 int main() {
-    CoreArbiter::CoreArbiterServer server("/tmp/CoreArbiter/testsocket",
-                                          "/tmp/CoreArbiter/testmem",
-                                          {1});
+	Logger::setLogLevel(WARNING);
+    CoreArbiterServer server("/tmp/CoreArbiter/testsocket",
+                             "/tmp/CoreArbiter/testmem",
+                             {1,2});
     return 0;
 }

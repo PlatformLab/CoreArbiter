@@ -173,7 +173,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         exit(-1);
     }
 
-    if (sys->listen(listenSocket, 10) < 0) { // TODO: backlog size?
+    if (sys->listen(listenSocket, 100) < 0) { // TODO: backlog size?
         close(listenSocket);
         LOG(ERROR, "Error listening: %s\n", strerror(errno));
         exit(-1);
@@ -565,13 +565,13 @@ CoreArbiterServer::coresRequested(int socket)
         }
     }
 
-    if (remainingCoresOwned > 0) {
-        // The application is voluntarily giving up cores, so we need to give
-        // it permission to block threads.
-        LOG(NOTICE, "Process %d is voluntarily releasing %u cores\n",
-            process->id, remainingCoresOwned);
-        *(process->coreReleaseRequestCount) += remainingCoresOwned;
-    }
+    // if (remainingCoresOwned > 0) {
+    //     // The application is voluntarily giving up cores, so we need to give
+    //     // it permission to block threads.
+    //     LOG(NOTICE, "Process %d is voluntarily releasing %u cores\n",
+    //         process->id, remainingCoresOwned);
+    //     *(process->coreReleaseRequestCount) += remainingCoresOwned;
+    // }
 
     if (desiredCoresChanged) {
         // Even if the total number of cores this process wants is the same, we
@@ -808,7 +808,6 @@ CoreArbiterServer::distributeCores()
                     if (threadsToReceiveCores.size() +
                             threadsAlreadyExclusive.size() ==
                                 exclusiveCores.size()) {
-                        LOG(NOTICE, "cores are filled\n");
                         coresFilled = true;
                         break;
                     }
@@ -839,16 +838,17 @@ CoreArbiterServer::distributeCores()
             
             LOG(NOTICE, "Granting core %lu to thread %d from process %d\n",
                    core->id, thread->id, thread->process->id);
-            moveThreadToExclusiveCore(thread, core);
 
-            if (!testingSkipSend) {
+            if (!testingSkipSend && thread->state != RUNNING_PREEMPTED) {
                 // Wake up the thread
                 if (!sendData(thread->socket, &core->id, sizeof(core_t),
                               "Error sending core ID to thread " +
                                     std::to_string(thread->id))) {
                     return;
                 }
+                LOG(DEBUG, "Sent wakeup\n");
             }
+            moveThreadToExclusiveCore(thread, core);
         } else if (threadsAlreadyExclusive.find(core->exclusiveThread) !=
                    threadsAlreadyExclusive.end()) {
             // This thread is supposed to have a core, so do nothing.
@@ -877,7 +877,9 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
         "on core %lu\n", process->id, core->id);
 
     // Tell the process that it needs to release a core
-    *(process->coreReleaseRequestCount) += 1;
+    // if (*(process->coreReleaseRequestCount) - process->coreReleaseCount <= process->totalCoresOwned) {
+        *(process->coreReleaseRequestCount) += 1;
+    // }
 
     int timerFd = sys->timerfd_create(CLOCK_MONOTONIC, 0);
     if (timerFd < 0) {

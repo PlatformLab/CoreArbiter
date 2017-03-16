@@ -240,8 +240,8 @@ CoreArbiterClient::getNumBlockedThreads()
     readData(serverSocket, &numCoresBlocked, sizeof(uint32_t),
              "Error receiving number of blocked cores from server");
 
-    LOG(NOTICE, "Server replied that there are %u blocked threads\n",
-        numCoresBlocked);
+    // LOG(NOTICE, "Server replied that there are %u blocked threads\n",
+    //     numCoresBlocked);
     return numCoresBlocked;
 }
 
@@ -281,8 +281,8 @@ CoreArbiterClient::getTotalAvailableCores()
     readData(serverSocket, &totalAvailableCores, sizeof(size_t),
              "Error receiving number of available cores from server");
 
-    LOG(NOTICE, "Server replied that there are %lu available cores\n",
-        totalAvailableCores);
+    // LOG(NOTICE, "Server replied that there are %lu available cores\n",
+    //     totalAvailableCores);
     return totalAvailableCores;
 }
 
