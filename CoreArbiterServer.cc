@@ -1047,7 +1047,7 @@ CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
             std::string dirName = arbiterCpusetPath + "/" +
                                   std::string(entry->d_name);
 
-            LOG(NOTICE, "removing %s\n", dirName.c_str());
+            LOG(DEBUG, "removing %s\n", dirName.c_str());
             if (sys->rmdir(dirName.c_str()) < 0) {
                 LOG(ERROR, "Error on rmdir %s: %s\n",
                     dirName.c_str(), strerror(errno));
