@@ -13,12 +13,14 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <algorithm>
 #include <assert.h>
-#include <iostream>
 #include <sys/un.h>
 #include <sys/eventfd.h>
+#include <signal.h>
+
 #include <thread>
+#include <iostream>
+#include <algorithm>
 
 #include "CoreArbiterServer.h"
 #include "Logger.h"
@@ -29,6 +31,7 @@ std::string CoreArbiterServer::cpusetPath = "/sys/fs/cgroup/cpuset";
 
 static Syscall defaultSyscall;
 Syscall* CoreArbiterServer::sys = &defaultSyscall;
+CoreArbiterServer* volatile CoreArbiterServer::mostRecentInstance = NULL;
 bool CoreArbiterServer::testingSkipCpusetAllocation = false;
 bool CoreArbiterServer::testingSkipCoreDistribution = false;
 bool CoreArbiterServer::testingSkipSend = false;
@@ -215,6 +218,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         exit(-1);
     }
 
+    mostRecentInstance = this;
+    installSignalHandler();
     if (arbitrateImmediately) {
         startArbitration();
     }
@@ -254,6 +259,9 @@ CoreArbiterServer::~CoreArbiterServer()
     }
 
     removeOldCpusets(cpusetPath + "/CoreArbiter");
+
+    if (mostRecentInstance == this)
+        mostRecentInstance = NULL;
 }
 
 /**
@@ -1131,6 +1139,22 @@ CoreArbiterServer::changeThreadState(struct ThreadInfo* thread,
     thread->state = state;
     thread->process->threadStateToSet[prevState].erase(thread);
     thread->process->threadStateToSet[state].insert(thread);
+}
+
+void signalHandler(int signal) {
+    CoreArbiterServer* mostRecentInstance = CoreArbiterServer::mostRecentInstance;
+    if (signal == SIGINT && mostRecentInstance != NULL) {
+        mostRecentInstance->endArbitration();
+    }
+}
+
+void
+CoreArbiterServer::installSignalHandler() {
+    struct sigaction signalAction;
+    signalAction.sa_handler = signalHandler;
+    signalAction.sa_flags = SA_RESTART;
+    if (sigaction(SIGINT, &signalAction, NULL) != 0)
+        LOG(ERROR, "Couldn't set signal handler for SIGINT");
 }
 
 }

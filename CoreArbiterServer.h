@@ -44,6 +44,10 @@ class CoreArbiterServer {
     void startArbitration();
     void endArbitration();
 
+    // Point at the most recently constructed instance of the
+    // CoreArbiterServer.
+    static CoreArbiterServer* volatile mostRecentInstance;
+
   private:
     struct ThreadInfo;
     struct ProcessInfo;
@@ -214,6 +218,8 @@ class CoreArbiterServer {
                                    struct CoreInfo* core);
     void removeThreadFromExclusiveCore(struct ThreadInfo* thread);
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
+
+    void installSignalHandler();
 
     // The path to the socket that the server is listening for new connections
     // on.
