@@ -1160,14 +1160,16 @@ void signalHandler(int signum) {
     struct sigaction signalAction;
     signalAction.sa_handler = SIG_DFL;
     signalAction.sa_flags = SA_RESTART;
-    sigaction(SIGINT, &signalAction, NULL);
+    sigaction(signum, &signalAction, NULL);
 
     // Process the signal
     if (signum == SIGINT)  {
-        CoreArbiterServer* mostRecentInstance = CoreArbiterServer::mostRecentInstance;
-        if (mostRecentInstance != NULL) {
-            mostRecentInstance->endArbitration();
-        }
+        std::thread([&]{
+            CoreArbiterServer* mostRecentInstance = CoreArbiterServer::mostRecentInstance;
+            if (mostRecentInstance != NULL) {
+                mostRecentInstance->endArbitration();
+            }
+        }).detach();
     } else if (signum == SIGSEGV || signum == SIGABRT) {
         invokeGDB(signum);
     }
