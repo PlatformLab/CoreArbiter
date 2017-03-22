@@ -1,13 +1,14 @@
-CCFLAGS=-g -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -std=c++11 -pthread
+CCFLAGS=-g -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -std=c++11
+LIBS=-IPerfUtils PerfUtils/libPerfUtils.a -pthread
 CC = g++
 
 all: server client
 
 server: CoreArbiterServer.o CoreArbiterServerMain.o mkdir_p.o Logger.o
-	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
 
 client:  CoreArbiterClientMain.o libCoreArbiter.a
-	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
 
 libCoreArbiter.a: CoreArbiterClient.o CoreArbiterServer.o mkdir_p.o Logger.o
 	ar rcs $@ $^	

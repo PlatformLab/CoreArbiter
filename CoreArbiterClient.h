@@ -61,7 +61,9 @@ class CoreArbiterClient {
 
     // Meant for testing, not general use
     uint32_t getNumBlockedThreads();
-    size_t getTotalAvailableCores();
+    size_t getNumUnoccupiedCores();
+    uint32_t getNumProcessesOnServer();
+
 
     class ClientException: public std::runtime_error {
       public:
@@ -73,6 +75,7 @@ class CoreArbiterClient {
     CoreArbiterClient(std::string serverSocketPath);
 
     void createNewServerConnection();
+    int openSharedMemory(void** bufPtr);
     void registerThread();
     void readData(int socket, void* buf, size_t numBytes, std::string err);
     void sendData(int socket, void* buf, size_t numBytes, std::string err);
@@ -84,12 +87,9 @@ class CoreArbiterClient {
     // threads.
     std::mutex mutex;
 
-    // A monotonically increasing count of the number of cores the server has
-    // requested that this process release in the client object's lifetime. It
-    // is incremented by the server; the client should only read its value.
-    std::atomic<uint64_t>* coreReleaseRequestCount;
+    struct ProcessStats* processStats;
 
-    bool* threadPreemptedPtr;
+    struct GlobalStats* globalStats;
 
     // A monotonically increasing count of the number of cores this process has
     // released back to the server (by calling blockUntilCoreAvailable()). It
@@ -109,7 +109,9 @@ class CoreArbiterClient {
 
     // The file descriptor whose file contains coreReleaseRequestCount. This
     // file is mmapped more fast access.
-    int sharedMemFd;
+    int processSharedMemFd;
+
+    int globalSharedMemFd;
 
     // The socket file descriptor used to communicate with the server. Every
     // thread has its own socket connection to the server.

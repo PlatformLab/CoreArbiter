@@ -43,5 +43,5 @@ int main(){
     std::thread coreThread(coreExec, std::ref(client));
 
     coreThread.join();
-    printf("There are %lu cores available\n", client.getTotalAvailableCores());
+    printf("There are %lu cores available\n", client.getNumUnoccupiedCores());
 }

@@ -24,6 +24,9 @@
 
 #include "CoreArbiterServer.h"
 #include "Logger.h"
+// #include "PerfUtils/TimeTrace.h"
+
+// using PerfUtils::TimeTrace;
 
 namespace CoreArbiter {
 
@@ -74,6 +77,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     : socketPath(socketPath)
     , listenSocket(-1)
     , sharedMemPathPrefix(sharedMemPathPrefix)
+    , globalSharedMemPath(sharedMemPathPrefix + "Global")
+    , globalSharedMemFd(-1)
     , epollFd(-1)
     , preemptionTimeout(RELEASE_TIMEOUT_MS)
     , corePriorityQueues(NUM_PRIORITIES)
@@ -152,6 +157,28 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     ensureParents(socketPath.c_str(), 0777);
     ensureParents(sharedMemPathPrefix.c_str(), 0777);
 
+    // Set up global shared memory
+    globalSharedMemFd = sys->open(globalSharedMemPath.c_str(),
+                                      O_CREAT | O_RDWR | O_TRUNC, S_IRWXU);
+    if (globalSharedMemFd < 0) {
+        LOG(ERROR, "Error opening shared memory page: %s\n",
+            strerror(errno));
+        return;
+    }
+
+    // Our clients are not necessarily root
+    sys->chmod(globalSharedMemPath.c_str(), 0777);
+
+    size_t globalSharedMemSize = sizeof(struct GlobalStats);
+    sys->ftruncate(globalSharedMemFd, globalSharedMemSize);
+    stats = (struct GlobalStats*)sys->mmap(NULL, getpagesize(),
+                                           PROT_READ | PROT_WRITE, MAP_SHARED,
+                                           globalSharedMemFd, 0);
+    if (stats == MAP_FAILED) {
+        LOG(ERROR, "Error on global stats mmap: %s\n", strerror(errno));
+        exit(-1);
+    }
+
     // Set up unix domain socket
     listenSocket = sys->socket(AF_UNIX, SOCK_STREAM, 0);
     if (listenSocket < 0) {
@@ -168,30 +195,42 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     sys->unlink(addr.sun_path);
 
     if (sys->bind(listenSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(listenSocket);
         LOG(ERROR, "Error binding listen socket: %s\n", strerror(errno));
+        sys->close(listenSocket);
+        if (remove(socketPath.c_str()) != 0) {
+            LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
+        }
         exit(-1);
     }
 
     if (sys->listen(listenSocket, 100) < 0) { // TODO: backlog size?
-        close(listenSocket);
         LOG(ERROR, "Error listening: %s\n", strerror(errno));
+        sys->close(listenSocket);
+        if (remove(socketPath.c_str()) != 0) {
+            LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
+        }
         exit(-1);
     }
 
     // Our clients are not necessarily root
     if (sys->chmod(addr.sun_path, 0777) < 0) {
-        close(listenSocket);
         LOG(ERROR, "Error on chmod for %s: %s\n",
             addr.sun_path, strerror(errno));
+        sys->close(listenSocket);
+        if (remove(socketPath.c_str()) != 0) {
+            LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
+        }
         exit(-1);
     }
 
     // Set up epoll
     epollFd = sys->epoll_create(MAX_EPOLL_EVENTS);
     if (epollFd < 0) {
-        close(listenSocket);
         LOG(ERROR, "Error on epoll_create: %s\n", strerror(errno));
+        sys->close(listenSocket);
+        if (remove(socketPath.c_str()) != 0) {
+            LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
+        }
         exit(-1);
     }
 
@@ -200,9 +239,12 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     listenEvent.data.fd = listenSocket;
     if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, listenSocket,
                        &listenEvent) < 0) {
-        sys->close(listenSocket);
         LOG(ERROR, "Error adding listenSocket %d to epoll: %s\n",
                 listenSocket, strerror(errno));
+        sys->close(listenSocket);
+        if (remove(socketPath.c_str()) != 0) {
+            LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
+        }
         exit(-1);
     }
 
@@ -212,9 +254,12 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     terminationEvent.data.fd = terminationFd;
     if (sys->epoll_ctl(epollFd, EPOLL_CTL_ADD, terminationFd,
                        &terminationEvent) < 0) {
-        sys->close(terminationFd);
         LOG(ERROR, "Error adding terminationFd %d to epoll: %s\n",
                 terminationFd, strerror(errno));
+        sys->close(terminationFd);
+        if (remove(socketPath.c_str()) != 0) {
+            LOG(ERROR, "Error deleting socket file: %s\n", strerror(errno));
+        }
         exit(-1);
     }
 
@@ -227,6 +272,9 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
 
 CoreArbiterServer::~CoreArbiterServer()
 {
+    // TimeTrace::setOutputFileName("CoreArbiterServer.log");
+    // TimeTrace::print();
+
     if (!testingSkipMemoryDeallocation) {
         for (struct CoreInfo* core : exclusiveCores) {
             core->cpusetFile.close();
@@ -342,12 +390,6 @@ bool CoreArbiterServer::handleEvents()
                 case CORE_REQUEST:
                     coresRequested(socket);
                     break;
-                case COUNT_BLOCKED_THREADS:
-                    countBlockedThreads(socket);
-                    break;
-                case TOTAL_AVAILABLE_CORES:
-                    totalAvailableCores(socket);
-                    break;
                 default:
                     LOG(ERROR, "Unknown message type: %u\n", msgType);
                     break;
@@ -397,49 +439,60 @@ CoreArbiterServer::acceptConnection(int listenSocket)
     if (processIdToInfo.find(processId) == processIdToInfo.end()) {
         // This is a new process, so we need to do some setup.
         // Construct shared memory page
-        std::string sharedMemPath = sharedMemPathPrefix +
+        std::string processSharedMemPath = sharedMemPathPrefix +
                                     std::to_string(processId);
-        int sharedMemFd = sys->open(sharedMemPath.c_str(),
-                                   O_CREAT | O_RDWR | O_TRUNC, S_IRWXU);
-        if (sharedMemFd < 0) {
+        int processSharedMemFd = sys->open(processSharedMemPath.c_str(),
+                                           O_CREAT | O_RDWR | O_TRUNC, S_IRWXU);
+        if (processSharedMemFd < 0) {
             LOG(ERROR, "Error opening shared memory page: %s\n",
                 strerror(errno));
             return;
         }
 
         // Our clients are not necessarily root
-        sys->chmod(sharedMemPath.c_str(), 0777);
+        sys->chmod(processSharedMemPath.c_str(), 0777);
 
-        size_t sharedMemSize = sizeof(std::atomic<uint64_t>) + sizeof(bool);
-        sys->ftruncate(sharedMemFd, sharedMemSize);        
-        std::atomic<uint64_t>* coreReleaseRequestCount =
-            (std::atomic<uint64_t>*)sys->mmap(NULL, getpagesize(),
-                                              PROT_READ | PROT_WRITE,
-                                              MAP_SHARED, sharedMemFd, 0);
-        if (coreReleaseRequestCount == MAP_FAILED) {
+        size_t processSharedMemSize = sizeof(struct ProcessStats);
+        sys->ftruncate(processSharedMemFd, processSharedMemSize);
+        struct ProcessStats* processStats =
+            (struct ProcessStats*)sys->mmap(NULL, getpagesize(),
+                                            PROT_READ | PROT_WRITE, MAP_SHARED,
+                                            processSharedMemFd, 0);
+        if (processStats == MAP_FAILED) {
             LOG(ERROR, "Error on mmap: %s\n", strerror(errno));
             // TODO: send error to client
             return;
         }
-        bool* threadPreempted = (bool*)(coreReleaseRequestCount + 1);
-        *coreReleaseRequestCount = 0;
-        *threadPreempted = false;
 
-        // Send location of shared memory to the application.
+        // Send location of global shared memory to the application.
         // First in the packet is the size of the path, followed by the path
         // itself. The path is null termianted, and the size includes the \0.
-        size_t pathLen = sharedMemPath.size() + 1;
-        char pathPacket[sizeof(size_t) + pathLen];
-        memcpy(pathPacket, &pathLen, sizeof(size_t));
-        memcpy(pathPacket + sizeof(size_t), sharedMemPath.c_str(), pathLen);
-        if (!sendData(socket, pathPacket, sizeof(pathPacket),
-                      "Sending shared memory path failed")) {
+        size_t pathLen = globalSharedMemPath.size() + 1;
+        char globalPathPacket[sizeof(size_t) + pathLen];
+        memcpy(globalPathPacket, &pathLen, sizeof(size_t));
+        memcpy(globalPathPacket + sizeof(size_t), globalSharedMemPath.c_str(), pathLen);
+        if (!sendData(socket, globalPathPacket, sizeof(globalPathPacket),
+                      "Sending global shared memory path failed")) {
+            return;
+        }
+
+        // Send the size of the process shared memory path to the process,
+        // followed by the path itself. The path is null terminated, and the
+        // size includes the \0.
+        pathLen = processSharedMemPath.size() + 1;
+        char processPathPacket[sizeof(size_t) + pathLen];
+        memcpy(processPathPacket, &pathLen, sizeof(size_t));
+        memcpy(processPathPacket + sizeof(size_t), processSharedMemPath.c_str(), pathLen);
+        if (!sendData(socket, processPathPacket, sizeof(processPathPacket),
+                      "Sending process shared memory path failed")) {
             return;
         }
 
         // Update process information since everything succeeded
-        processIdToInfo[processId] = new ProcessInfo(
-            processId, sharedMemFd, coreReleaseRequestCount, threadPreempted);
+        processIdToInfo[processId] =
+            new ProcessInfo(processId, processSharedMemFd, processStats);
+
+        stats->numProcesses++;
 
         LOG(NOTICE, "Registered process with id %d on socket %d\n",
                processId, socket);
@@ -460,6 +513,8 @@ CoreArbiterServer::acceptConnection(int listenSocket)
 void
 CoreArbiterServer::threadBlocking(int socket)
 {
+    // TimeTrace::record("Start handling thread blocking request");
+
     if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
         LOG(WARNING, "Unknown thread is blocking\n");
         return;
@@ -468,6 +523,7 @@ CoreArbiterServer::threadBlocking(int socket)
     struct ThreadInfo* thread = threadSocketToInfo[socket];
     LOG(NOTICE, "Thread %d is blocking\n", thread->id);
 
+
     if (thread->state == BLOCKED) {
         LOG(WARNING, "Thread %d was already blocked\n", thread->id);
         return;
@@ -475,8 +531,9 @@ CoreArbiterServer::threadBlocking(int socket)
 
     struct ProcessInfo* process = thread->process;
     bool processOwesCore =
-        *(process->coreReleaseRequestCount) > process->coreReleaseCount;
+        process->stats->coreReleaseRequestCount > process->coreReleaseCount;
     bool shouldDistributeCores = true;
+
 
     if (thread->state == RUNNING_EXCLUSIVE && processOwesCore) {
         LOG(NOTICE, "Removing thread %d from core %lu\n",
@@ -495,6 +552,7 @@ CoreArbiterServer::threadBlocking(int socket)
             LOG(NOTICE, "Moving previously preempted thread %d back to "
                         "exclusive core\n", unmanagedThread->id);
             moveThreadToExclusiveCore(unmanagedThread, core);
+            process->stats->unpreemptedCount++;
             shouldDistributeCores = false;
         }
     } else if (thread->state == RUNNING_EXCLUSIVE && !processOwesCore) {
@@ -505,23 +563,27 @@ CoreArbiterServer::threadBlocking(int socket)
     } else if (thread->state == RUNNING_PREEMPTED && processOwesCore) {
         LOG(NOTICE, "Preempted thread %d is blocking\n", thread->id);
         process->coreReleaseCount++;
+        process->stats->unpreemptedCount++;
     } else if (thread->state == RUNNING_PREEMPTED && !processOwesCore) {
         LOG(WARNING, "Inconsistent state! Thread %d was preempted, but its "
                      "process does not owe a core.\n", thread->id);
+        process->stats->unpreemptedCount++;
     }
 
     changeThreadState(thread, BLOCKED);
-    if (thread->process->threadStateToSet[RUNNING_PREEMPTED].empty()) {
-        *(process->threadPreempted) = false;
-    }
-    if (shouldDistributeCores) {
+    process->stats->numBlockedThreads++;
+     if (shouldDistributeCores) {
         distributeCores();
     }
+
+    // TimeTrace::record("Finished thread blocking request");
 }
 
 void
 CoreArbiterServer::coresRequested(int socket)
 {
+    // TimeTrace::record("Starting to serve core request");
+
     uint32_t numCoresArr[NUM_PRIORITIES];
     if (!readData(socket, &numCoresArr, sizeof(uint32_t) * NUM_PRIORITIES,
                  "Error receiving number of cores requested")) {
@@ -538,14 +600,10 @@ CoreArbiterServer::coresRequested(int socket)
     LOG(NOTICE, "\n");
 
     bool desiredCoresChanged = false;
-    uint32_t remainingCoresOwned = process->totalCoresOwned;
-
     for (size_t priority = 0; priority < NUM_PRIORITIES; priority++) {
         // Update information for a single priority
         uint32_t prevNumCoresDesired = process->desiredCorePriorities[priority];
         uint32_t numCoresDesired = numCoresArr[priority];
-        uint32_t numCoresOwned = std::min(remainingCoresOwned, numCoresDesired);
-        remainingCoresOwned -= numCoresOwned;
 
         process->desiredCorePriorities[priority] = numCoresDesired;
 
@@ -565,38 +623,13 @@ CoreArbiterServer::coresRequested(int socket)
         }
     }
 
-    // if (remainingCoresOwned > 0) {
-    //     // The application is voluntarily giving up cores, so we need to give
-    //     // it permission to block threads.
-    //     LOG(NOTICE, "Process %d is voluntarily releasing %u cores\n",
-    //         process->id, remainingCoresOwned);
-    //     *(process->coreReleaseRequestCount) += remainingCoresOwned;
-    // }
-
     if (desiredCoresChanged) {
         // Even if the total number of cores this process wants is the same, we
         // may need to shuffle cores around because of priority changes.
         distributeCores();
     }
-}
 
-void
-CoreArbiterServer::countBlockedThreads(int socket)
-{
-    if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
-        LOG(WARNING, "Unknown connection is asking for blocked thread count\n");
-        return;
-    }
-
-    struct ProcessInfo* process = threadSocketToInfo[socket]->process;
-    uint32_t numBlockedThreads =
-        (uint32_t)process->threadStateToSet[BLOCKED].size();
-    LOG(NOTICE,
-        "Process %d has requested its number of blocked threads (%u)\n",
-        process->id, numBlockedThreads);
-
-    sendData(socket, &numBlockedThreads, sizeof(uint32_t),
-             "Error sending number of blocked threads");
+    // TimeTrace::record("Finished serving core request");
 }
 
 void
@@ -614,7 +647,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
     }
     struct ProcessInfo* process = processIdToInfo[processId];
 
-    if (*(process->coreReleaseRequestCount) == process->coreReleaseCount) {
+    if (process->stats->coreReleaseRequestCount == process->coreReleaseCount) {
         // This process gave up the core it was supposed to
         LOG(NOTICE, "Core retrieval timer went off for process %d, but process "
             "already released the core it was supposed to.\n", process->id);
@@ -635,7 +668,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
     struct ThreadInfo* thread = *(exclusiveThreadSet.begin());
     removeThreadFromExclusiveCore(thread);
     changeThreadState(thread, RUNNING_PREEMPTED);
-    *(process->threadPreempted) = true;
+    process->stats->preemptedCount++;
 
     distributeCores();
 }
@@ -652,31 +685,29 @@ CoreArbiterServer::cleanupConnection(int socket)
     // We'll only distribute cores at the end if necessary
     bool shouldDistributeCores = false;
 
-    // Remove thread from all maps
-    process->threadStateToSet[thread->state].erase(thread);
-    threadSocketToInfo.erase(thread->socket);
-
     // Update state pertaining to cores
     if (thread->state == RUNNING_EXCLUSIVE) {
         exclusiveThreads.erase(thread);
         thread->core->exclusiveThread = NULL;
-        process->totalCoresOwned--;
-        if (process->coreReleaseCount < *(process->coreReleaseRequestCount)) {
+        process->stats->numOwnedCores--;
+        // removeThreadFromExclusiveCore(thread);
+        if (process->coreReleaseCount < process->stats->coreReleaseRequestCount) {
             process->coreReleaseCount++;
         }
         shouldDistributeCores = true;
     } else if (thread->state == RUNNING_PREEMPTED) {
-        if (process->coreReleaseCount < *(process->coreReleaseRequestCount)) {
+        if (process->coreReleaseCount < process->stats->coreReleaseRequestCount) {
             process->coreReleaseCount++;
+            process->stats->unpreemptedCount++;
         } else {
             LOG(WARNING, "Inconsistent state. Process %d has a preempted "
                          "thread but does not owe a core\n", process->id);
         }
-
-        if (process->threadStateToSet[RUNNING_PREEMPTED].empty()) {
-            *(process->threadPreempted) = false;
-        }
     }
+
+    // Remove thread from all maps
+    process->threadStateToSet[thread->state].erase(thread);
+    threadSocketToInfo.erase(thread->socket);
 
     // If there are no remaining threads in this process, also delete all
     // process state
@@ -689,7 +720,7 @@ CoreArbiterServer::cleanupConnection(int socket)
     }
     if (noRemainingThreads) {
         LOG(NOTICE, "All of process %d's threads have exited. Removing all "
-            "process records\n", process->id);
+            "process records.\n", process->id);
         sys->close(process->sharedMemFd);
         processIdToInfo.erase(process->id);
 
@@ -705,6 +736,10 @@ CoreArbiterServer::cleanupConnection(int socket)
             }
         }
 
+        stats->numProcesses--;
+        LOG(NOTICE, "The server now has %u processes connected.\n",
+            stats->numProcesses.load());
+
         delete process;
     }
 
@@ -718,6 +753,8 @@ CoreArbiterServer::cleanupConnection(int socket)
 void
 CoreArbiterServer::distributeCores()
 {
+    // TimeTrace::record("Starting core distribution");
+
     if (testingSkipCoreDistribution) {
         LOG(DEBUG, "Skipping core distribution\n");
         return;
@@ -821,40 +858,49 @@ CoreArbiterServer::distributeCores()
         thread->process->threadStateToSet[thread->state].insert(thread);
     }
 
-    if (threadsToReceiveCores.empty()) {
-        return;
-    }
-
     // Assign cores to threads
-    for (size_t i = 0; i < exclusiveCores.size() &&
-         !threadsToReceiveCores.empty(); i++) {
+    for (size_t i = 0; i < exclusiveCores.size(); i++) {
         struct CoreInfo* core = exclusiveCores[i];
 
-        if (!core->exclusiveThread) {
+        if (!core->exclusiveThread && !threadsToReceiveCores.empty()) {
             // This core is available. Give it to a thread not already on
             // a core.
             struct ThreadInfo* thread = threadsToReceiveCores.front();
             threadsToReceiveCores.pop_front();
+            struct ProcessInfo* process = thread->process;
             
             LOG(NOTICE, "Granting core %lu to thread %d from process %d\n",
-                   core->id, thread->id, thread->process->id);
+                   core->id, thread->id, process->id);
 
-            if (!testingSkipSend && thread->state != RUNNING_PREEMPTED) {
-                // Wake up the thread
-                if (!sendData(thread->socket, &core->id, sizeof(core_t),
-                              "Error sending core ID to thread " +
-                                    std::to_string(thread->id))) {
-                    return;
-                }
-                LOG(DEBUG, "Sent wakeup\n");
-            }
+            // Move the thread before waking it up so that it wakes up in its
+            // new cpuset 
+            ThreadState prevState = thread->state;
             moveThreadToExclusiveCore(thread, core);
+
+            if (prevState == RUNNING_PREEMPTED) {
+                LOG(NOTICE, "Thread %d was previously running preempted on the "
+                            "unmanaged core\n", thread->id);
+                process->stats->unpreemptedCount++;
+            } else {
+                // Thread was blocked
+                process->stats->numBlockedThreads--;
+
+                if (!testingSkipSend) {
+                    // Wake up the thread
+                    if (!sendData(thread->socket, &core->id, sizeof(core_t),
+                                  "Error sending core ID to thread " +
+                                        std::to_string(thread->id))) {
+                        return;
+                    }
+                    LOG(DEBUG, "Sent wakeup\n");
+                }
+            }
         } else if (threadsAlreadyExclusive.find(core->exclusiveThread) !=
                    threadsAlreadyExclusive.end()) {
             // This thread is supposed to have a core, so do nothing.
             LOG(NOTICE, "Keeping thread %d on core %lu\n",
                    core->exclusiveThread->id, core->id);
-        } else {
+        } else if (core->exclusiveThread) {
             // The thread on this core needs to be preempted. It will be
             // assigned to a new thread (one of the ones at the end of
             // threadsToReceiveCores) when the currently running thread blocks
@@ -862,6 +908,8 @@ CoreArbiterServer::distributeCores()
             requestCoreRelease(core);
         }
     }
+
+    // TimeTrace::record("Finished core distribution");
 }
 
 void
@@ -877,9 +925,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
         "on core %lu\n", process->id, core->id);
 
     // Tell the process that it needs to release a core
-    // if (*(process->coreReleaseRequestCount) - process->coreReleaseCount <= process->totalCoresOwned) {
-        *(process->coreReleaseRequestCount) += 1;
-    // }
+    process->stats->coreReleaseRequestCount += 1;
 
     int timerFd = sys->timerfd_create(CLOCK_MONOTONIC, 0);
     if (timerFd < 0) {
@@ -910,20 +956,6 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
     }
 
     timerFdToProcessId[timerFd] = process->id;
-}
-
-void
-CoreArbiterServer::totalAvailableCores(int socket)
-{
-    size_t availableCoreCount = 0;
-    for (struct CoreInfo* core : exclusiveCores) {
-        if (!core->exclusiveThread) {
-            availableCoreCount++;
-        }
-    }
-    LOG(NOTICE, "There are %lu available cores\n", availableCoreCount);
-    sendData(socket, &availableCoreCount, sizeof(size_t),
-             "Error sending available core count\n");
 }
 
 bool
@@ -1027,7 +1059,7 @@ CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
     DIR* dir = sys->opendir(arbiterCpusetPath.c_str());
     if (!dir) {
         // This is likely just because we don't have old cpusets to remove
-        LOG(ERROR, "Error on opendir %s: %s\n",
+        LOG(WARNING, "Error on opendir %s: %s\n",
             arbiterCpusetPath.c_str(), strerror(errno));
         return;
     }
@@ -1089,20 +1121,24 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
         core->cpusetFile << thread->id;
         core->cpusetFile.flush();
         if (core->cpusetFile.bad()) {
-            // TODO: handle this elegantly. It shouldn't happen, so I'm killing
-            // the server for now.
-            LOG(ERROR, "Unable to write %d to cpuset file for core %lu",
+            // This error is likely because the thread has exited. Sleeping
+            // helps keep the kernel from giving more errors the next time we
+            // try to move a legitimate thread.
+            LOG(ERROR, "Unable to write %d to cpuset file for core %lu\n",
                 thread->id, core->id);
-            exit(-1);
+            usleep(750); // TODO: don't just hard-code this
         }
     }
 
     changeThreadState(thread, RUNNING_EXCLUSIVE);
-    thread->process->totalCoresOwned++;
     thread->core = core;
     core->exclusiveThread = thread;
-
     exclusiveThreads.insert(thread);
+
+    struct ProcessInfo* process = thread->process;
+    process->stats->numOwnedCores++;
+
+    stats->numUnoccupiedCores++;
 }
 
 void
@@ -1121,16 +1157,18 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
         if (unmanagedCore.cpusetFile.bad()) {
             // TODO: handle this elegantly. It shouldn't happen, so I'm killing
             // the server for now.
-            LOG(ERROR, "Unable to write %d to cpuset file for core %lu",
+            LOG(ERROR, "Unable to write %d to cpuset file for core %lu\n",
                 thread->id, unmanagedCore.id);
-            exit(-1);
+            // exit(-1);
         }
     }
 
-    thread->process->totalCoresOwned--;
+    thread->process->stats->numOwnedCores--;
     thread->core->exclusiveThread = NULL;
     thread->core = NULL;
     exclusiveThreads.erase(thread);
+
+    stats->numUnoccupiedCores--;
 }
 
 void

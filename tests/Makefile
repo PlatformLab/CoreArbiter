@@ -3,7 +3,7 @@ CLIENT_BINS=CoreArbiterClientTest.o
 SERVER_BINS=CoreArbiterServerTest.o
 CXXFLAGS=-std=c++11 -O3 -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -g
 INCLUDE=-I.. -I${GTEST_DIR}/include
-LIBS=-L../ -L./ -lCoreArbiter  -lgtest -pthread
+LIBS=-L../ -L./ -lCoreArbiter -lgtest -IPerfUtils ../PerfUtils/libPerfUtils.a -pthread
 
 run: CoreArbiterServerTest CoreArbiterClientTest
 	sudo ./CoreArbiterServerTest

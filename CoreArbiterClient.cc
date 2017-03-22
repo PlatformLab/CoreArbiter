@@ -47,17 +47,20 @@ bool CoreArbiterClient::testingSkipConnectionSetup = false;
  */
 CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
     : mutex()
-    , coreReleaseRequestCount(NULL)
     , coreReleaseCount(0)
     , ownedCoreCount(0)
     , serverSocketPath(serverSocketPath)
-    , sharedMemFd(-1)
+    , processSharedMemFd(-1)
+    , globalSharedMemFd(-1)
 {
 }
 
 CoreArbiterClient::~CoreArbiterClient()
 {
-    close(sharedMemFd);
+    if (!testingSkipConnectionSetup) {
+        sys->close(processSharedMemFd);
+        sys->close(globalSharedMemFd);
+    }
 }
 
 /**
@@ -128,8 +131,8 @@ CoreArbiterClient::mustReleaseCore()
     }
 
     // Do an initial check without the lock
-    if (coreReleaseCount + coreReleasePendingCount
-            >= *coreReleaseRequestCount) {
+    if (coreReleaseCount + coreReleasePendingCount >=
+            processStats->coreReleaseRequestCount) {
         LOG(DEBUG, "No core release requested\n");
         return false;
     }
@@ -138,7 +141,7 @@ CoreArbiterClient::mustReleaseCore()
 
     // Check again now that we have the lock
     if (coreReleaseCount + coreReleasePendingCount >=
-                *coreReleaseRequestCount) {
+            processStats->coreReleaseRequestCount) {
         LOG(DEBUG, "No core release requested\n");
         return false;
     }
@@ -155,7 +158,7 @@ CoreArbiterClient::mustReleaseCore()
 bool
 CoreArbiterClient::threadPreempted()
 {
-    return *threadPreemptedPtr;
+    return processStats->preemptedCount > processStats->unpreemptedCount;
 }
 
 /**
@@ -179,7 +182,7 @@ CoreArbiterClient::blockUntilCoreAvailable()
         // This thread currently has exclusive access to a core. We need to
         // check whether it should be blocking.
         Lock lock(mutex);
-        if (coreReleaseCount == *coreReleaseRequestCount) {
+        if (coreReleaseCount == processStats->coreReleaseRequestCount) {
             LOG(WARNING, "Not blocking thread %d because its process has not "
                 "been asked to give up a core\n", sys->gettid());
             return coreId;
@@ -210,42 +213,6 @@ CoreArbiterClient::blockUntilCoreAvailable()
 }
 
 /**
- * Returns the number of threads this process owns that are running exclusively
- * on a core.
- */
-uint32_t
-CoreArbiterClient::getOwnedCoreCount()
-{
-    Lock lock(mutex);
-    return ownedCoreCount;
-}
-
-/**
- * Returns the number of threads belonging to this process that are currently
- * blocked waiting on a core.
- */
-uint32_t
-CoreArbiterClient::getNumBlockedThreads()
-{
-    if (serverSocket < 0) {
-        createNewServerConnection();
-    }
-
-    LOG(DEBUG, "Polling the server for the number of blocked threads\n");
-    uint8_t countBlockedThreadsMsg = COUNT_BLOCKED_THREADS;
-    sendData(serverSocket, &countBlockedThreadsMsg, sizeof(uint8_t),
-             "Error sending count blocked threads request");
-
-    uint32_t numCoresBlocked;
-    readData(serverSocket, &numCoresBlocked, sizeof(uint32_t),
-             "Error receiving number of blocked cores from server");
-
-    // LOG(NOTICE, "Server replied that there are %u blocked threads\n",
-    //     numCoresBlocked);
-    return numCoresBlocked;
-}
-
-/**
  * Tells the server that this thread no longer wishes to run on exclusive cores.
  * This should always be called before a thread exits to ensure that the server
  * doesn't keep stale threads on cores.
@@ -259,6 +226,8 @@ CoreArbiterClient::unregisterThread()
         return;
     }
 
+    printf("Unregistering thread %d\n", sys->gettid());
+
     // Closing this socket alerts the server, which will clean up this thread's
     // state
     if (sys->close(serverSocket) < 0) {
@@ -266,24 +235,58 @@ CoreArbiterClient::unregisterThread()
     }
 }
 
-size_t
-CoreArbiterClient::getTotalAvailableCores()
+/**
+ * Returns the number of threads this process owns that are running exclusively
+ * on a core.
+ */
+uint32_t
+CoreArbiterClient::getOwnedCoreCount()
 {
     if (serverSocket < 0) {
         createNewServerConnection();
     }
 
-    uint8_t totalAvailableCoresMsg = TOTAL_AVAILABLE_CORES;
-    sendData(serverSocket, &totalAvailableCoresMsg, sizeof(uint8_t),
-             "Error sending total available cores request");
+    return processStats->numOwnedCores;
+}
 
-    size_t totalAvailableCores;
-    readData(serverSocket, &totalAvailableCores, sizeof(size_t),
-             "Error receiving number of available cores from server");
+/**
+ * Returns the number of threads belonging to this process that are currently
+ * blocked waiting on a core.
+ */
+uint32_t
+CoreArbiterClient::getNumBlockedThreads()
+{
+    if (serverSocket < 0) {
+        createNewServerConnection();
+    }
 
-    // LOG(NOTICE, "Server replied that there are %lu available cores\n",
-    //     totalAvailableCores);
-    return totalAvailableCores;
+    return processStats->numBlockedThreads;
+}
+
+/**
+ * Returns the number of cores under the server's control that do not currently
+ * have a thread running exclusively.
+ */
+size_t
+CoreArbiterClient::getNumUnoccupiedCores()
+{
+    if (serverSocket < 0) {
+        createNewServerConnection();
+    }
+
+    return globalStats->numUnoccupiedCores;
+}
+
+/**
+ * Returns the number of processes currently connected to the server.
+ */
+uint32_t
+CoreArbiterClient::getNumProcessesOnServer() {
+    if (serverSocket < 0) {
+        createNewServerConnection();
+    }
+
+    return globalStats->numProcesses;
 }
 
 // -- private methods
@@ -341,41 +344,46 @@ CoreArbiterClient::createNewServerConnection()
              "Error sending thread ID");
 
     Lock lock(mutex);
-    if (coreReleaseRequestCount == NULL) {
+    if (!processStats) {
         // This is the first time this process is registering so we need to
-        // set up the shared memory page.
-
-        // Read the shared memory path length from the server
-        size_t pathLen;
-        readData(serverSocket, &pathLen, sizeof(size_t),
-                 "Error receiving shared memory path length");
-
-        // Read the shared memory path from the server
-        char sharedMemPath[pathLen];
-        readData(serverSocket, sharedMemPath, pathLen,
-                 "Error receiving shared memory path");
-
-        // Open the shared memory
-        sharedMemFd = sys->open(sharedMemPath, O_RDONLY);
-        if (sharedMemFd < 0) {
-            std::string err = "Opening shared memory at path " +
-                              std::string(sharedMemPath) + " failed" +
-                              std::string(strerror(errno));
-            LOG(ERROR, "%s\n", err.c_str());
-            throw ClientException(err);
-        }
-        coreReleaseRequestCount = (std::atomic<uint64_t>*)sys->mmap(
-            NULL, getpagesize(), PROT_READ, MAP_SHARED, sharedMemFd, 0);
-        if (coreReleaseRequestCount == MAP_FAILED) {
-            std::string err = "mmap failed: " + std::string(strerror(errno));
-            LOG(ERROR, "%s\n", err.c_str());
-            throw ClientException(err);
-        }
-        threadPreemptedPtr = (bool*)(coreReleaseRequestCount + 1);
+        // set up the shared memory pages
+        globalSharedMemFd = openSharedMemory((void**)&globalStats);
+        processSharedMemFd = openSharedMemory((void**)&processStats);
     }
 
     LOG(NOTICE, "Successfully registered process %d, thread %d with server.\n",
         processId, threadId);
+}
+
+int CoreArbiterClient::openSharedMemory(void** bufPtr) {
+    // Read the shared memory path length from the server
+    size_t pathLen;
+    readData(serverSocket, &pathLen, sizeof(size_t),
+             "Error receiving shared memory path length");
+
+    // Read the shared memory path from the server
+    char sharedMemPath[pathLen];
+    readData(serverSocket, sharedMemPath, pathLen,
+             "Error receiving shared memory path");
+
+    // Open the shared memory
+    int fd = sys->open(sharedMemPath, O_RDONLY);
+    if (fd < 0) {
+        std::string err = "Opening shared memory at path " +
+                          std::string(sharedMemPath) + " failed" +
+                          std::string(strerror(errno));
+        LOG(ERROR, "%s\n", err.c_str());
+        throw ClientException(err);
+    }
+
+    *bufPtr = sys->mmap(NULL, getpagesize(), PROT_READ, MAP_SHARED, fd, 0);
+    if (*bufPtr == MAP_FAILED) {
+        std::string err = "mmap failed: " + std::string(strerror(errno));
+        LOG(ERROR, "%s\n", err.c_str());
+        throw ClientException(err);
+    }
+
+    return fd;
 }
 
 /**

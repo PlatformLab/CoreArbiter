@@ -154,22 +154,11 @@ class CoreArbiterServer {
         // between the process and server (see coreReleaseRequestCount below).
         int sharedMemFd;
 
-        // A monotonically increasing counter in shared memory of the number of
-        // cores this process is expected to release. This value is compared
-        // with coreReleaseCount to determine whether the process owes a core.
-        // This value is only incremented by the server; nobody else should have
-        // write access.
-        std::atomic<uint64_t>* coreReleaseRequestCount;
-
-        bool* threadPreempted;
+        struct ProcessStats* stats;
 
         // A monotonically increasing counter of the number of cores this
         // process has owned and then released.
         uint64_t coreReleaseCount;
-
-        // The number of cores that this process currently has threads running
-        // exclusively on (at all priority levels).
-        uint32_t totalCoresOwned;
 
         // How many cores this process desires at each priority level. Smaller
         // indexes mean higher priority.
@@ -180,19 +169,14 @@ class CoreArbiterServer {
                           std::hash<int>> threadStateToSet;
 
         ProcessInfo()
-            : totalCoresOwned(0)
-            , desiredCorePriorities(NUM_PRIORITIES)
+            : desiredCorePriorities(NUM_PRIORITIES)
         {}
 
-        ProcessInfo(pid_t id, int sharedMemFd,
-                    std::atomic<uint64_t>* coreReleaseRequestCount,
-                    bool* threadPreempted)
+        ProcessInfo(pid_t id, int sharedMemFd, struct ProcessStats* stats)
             : id(id)
             , sharedMemFd(sharedMemFd)
-            , coreReleaseRequestCount(coreReleaseRequestCount)
-            , threadPreempted(threadPreempted)
+            , stats(stats)
             , coreReleaseCount(0)
-            , totalCoresOwned(0)
             , desiredCorePriorities(NUM_PRIORITIES)
         {}
     };
@@ -201,12 +185,10 @@ class CoreArbiterServer {
     void acceptConnection(int listenSocket);
     void threadBlocking(int socket);
     void coresRequested(int socket);
-    void countBlockedThreads(int socket);
     void timeoutThreadPreemption(int timerFd);
     void cleanupConnection(int socket);
     void distributeCores();
     void requestCoreRelease(struct CoreInfo* core);
-    void totalAvailableCores(int socket);
 
     bool readData(int socket, void* buf, size_t numBytes, std::string err);
     bool sendData(int socket, void* buf, size_t numBytes, std::string err);
@@ -232,6 +214,12 @@ class CoreArbiterServer {
     // The prefix that will be used to generate shared memory file paths for
     // each process. This can be either a file or directory.
     std::string sharedMemPathPrefix;
+
+    std::string globalSharedMemPath;
+
+    int globalSharedMemFd;
+
+    struct GlobalStats* stats;
 
     // The file descriptor used to block on client requests.
     int epollFd;

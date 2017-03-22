@@ -30,14 +30,16 @@ class CoreArbiterClientTest : public ::testing::Test {
     std::string memPath;
     int clientSocket;
     int serverSocket;
-    std::atomic<uint64_t> coreReleaseRequestCount;
+    ProcessStats processStats;
+    GlobalStats globalStats;
 
     CoreArbiterClient client;
 
     CoreArbiterClientTest()
         : socketPath("/tmp/CoreArbiter/testsocket")
         , memPath("/tmp/CoreArbiter/testsocket")
-        , coreReleaseRequestCount(0)
+        , processStats()
+        , globalStats()
         , client("")
     {
         Logger::setLogLevel(ERROR);
@@ -58,19 +60,22 @@ class CoreArbiterClientTest : public ::testing::Test {
 
     void connectClient() {
         client.serverSocket = clientSocket;
-        client.coreReleaseRequestCount = &coreReleaseRequestCount;
-        coreReleaseRequestCount = 0;
-        client.coreReleaseCount = 0;
+        client.processStats = &processStats;
+        client.globalStats = &globalStats;
 
     }
 
     void disconnectClient() {
         client.serverSocket = -1;
-        client.coreReleaseRequestCount = NULL;
+        client.processStats = NULL;
+        client.globalStats = NULL;
     }
 };
 
 TEST_F(CoreArbiterClientTest, setNumCores_invalidRequest) {
+    CoreArbiterClient::testingSkipConnectionSetup = true;
+    disconnectClient();
+
     // Core request vector too small
     ASSERT_THROW(client.setNumCores({0}),
                  CoreArbiterClient::ClientException);
@@ -90,8 +95,6 @@ TEST_F(CoreArbiterClientTest, setNumCores_establishConnection) {
     ASSERT_THROW(client.setNumCores({0,0,0,0,0,0,0,0}),
                  CoreArbiterClient::ClientException);
     ASSERT_EQ(client.serverSocket, 999);
-
-    CoreArbiterClient::testingSkipConnectionSetup = false;
 }
 
 TEST_F(CoreArbiterClientTest, setNumCores) {
@@ -115,7 +118,7 @@ TEST_F(CoreArbiterClientTest, mustReleaseCore) {
     connectClient();
     ASSERT_FALSE(client.mustReleaseCore());
 
-    coreReleaseRequestCount++;
+    processStats.coreReleaseRequestCount = 1;
     ASSERT_TRUE(client.mustReleaseCore());
     ASSERT_EQ(client.coreReleasePendingCount, 1u);
     
@@ -137,37 +140,35 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_establishConnection) {
     ASSERT_THROW(client.blockUntilCoreAvailable(),
                  CoreArbiterClient::ClientException);
     ASSERT_EQ(client.serverSocket, 999);
-
-    CoreArbiterClient::testingSkipConnectionSetup = false;
 }
 
 TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
     connectClient();
-    coreReleaseRequestCount = 0;
+    client.processStats->coreReleaseRequestCount = 0;
     client.coreId = 1;
-    client.ownedCoreCount = 1;
+    client.processStats->numOwnedCores = 1;
     client.coreReleasePendingCount = 0;
 
     // Thread should not be allowed to block
     EXPECT_EQ(client.blockUntilCoreAvailable(), 1);
-    EXPECT_EQ(client.ownedCoreCount, 1u);
+    EXPECT_EQ(client.processStats->numOwnedCores, 1u);
 
     // This time thread should block because it owes the server a core
-    coreReleaseRequestCount = 1;
+    client.processStats->coreReleaseRequestCount = 1;
     core_t coreId = 2;
     send(serverSocket, &coreId, sizeof(core_t), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
     EXPECT_EQ(client.coreReleaseCount, 1u);
     EXPECT_EQ(client.coreReleasePendingCount, 0u);
-    EXPECT_EQ(client.ownedCoreCount, 1u);
+    EXPECT_EQ(client.processStats->numOwnedCores, 1u);
 
     // Same test, but this time with a pending release
-    coreReleaseRequestCount = 1;
+    client.processStats->coreReleaseRequestCount = 1;
     send(serverSocket, &coreId, sizeof(core_t), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
     EXPECT_EQ(client.coreReleaseCount, 1u);
     EXPECT_EQ(client.coreReleasePendingCount, 0u);
-    EXPECT_EQ(client.ownedCoreCount, 1u);
+    EXPECT_EQ(client.processStats->numOwnedCores, 1u);
 
     uint8_t blockMsg;
     recv(serverSocket, &blockMsg, sizeof(uint8_t), 0);
@@ -175,7 +176,7 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 }
 
 TEST_F(CoreArbiterClientTest, getOwnedCoreCount) {
-    client.ownedCoreCount = 99;
+    client.processStats->numOwnedCores = 99;
     EXPECT_EQ(client.getOwnedCoreCount(), 99u);
 }
 
