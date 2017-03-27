@@ -181,6 +181,16 @@ class CoreArbiterServer {
         {}
     };
 
+    /**
+     * A snapshot of the state of a process at the time that a preemption timer
+     * is set. This prevents the server from preempting a thread that was just
+     * asked to yield if the process complied with a prior release request.
+     */
+    struct TimerInfo {
+        pid_t processId;
+        uint64_t coreReleaseRequestCount;
+    };
+
     bool handleEvents();
     void acceptConnection(int listenSocket);
     void threadBlocking(int socket);
@@ -224,9 +234,8 @@ class CoreArbiterServer {
     // The file descriptor used to block on client requests.
     int epollFd;
 
-    // A map of core preemption timers to the process that a core should be
-    // retrieved from.
-    std::unordered_map<int, pid_t> timerFdToProcessId;
+    // A map of core preemption timers to their related information.
+    std::unordered_map<int, struct TimerInfo> timerFdToInfo;
 
     // The amount of time in milliseconds to wait before forceably preempting
     // a a thread from its exclusive core to the unmanaged core.
@@ -267,7 +276,7 @@ class CoreArbiterServer {
     // Used for testing to avoid unnecessary setup and code execution.
     static bool testingSkipCpusetAllocation;
     static bool testingSkipCoreDistribution;
-    static bool testingSkipSend;
+    static bool testingSkipSocketCommunication;
     static bool testingSkipMemoryDeallocation;
 };
 

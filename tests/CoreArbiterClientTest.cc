@@ -175,9 +175,9 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
     EXPECT_EQ(blockMsg, THREAD_BLOCK);
 }
 
-TEST_F(CoreArbiterClientTest, getOwnedCoreCount) {
-    client.processStats->numOwnedCores = 99;
-    EXPECT_EQ(client.getOwnedCoreCount(), 99u);
+TEST_F(CoreArbiterClientTest, getNumOwnedCores) {
+    client.numOwnedCores = 99;
+    EXPECT_EQ(client.getNumOwnedCores(), 99u);
 }
 
 }

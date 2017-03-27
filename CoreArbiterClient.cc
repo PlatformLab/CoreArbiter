@@ -48,7 +48,8 @@ bool CoreArbiterClient::testingSkipConnectionSetup = false;
 CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
     : mutex()
     , coreReleaseCount(0)
-    , ownedCoreCount(0)
+    , numOwnedCores(0)
+    , numBlockedThreads(0)
     , serverSocketPath(serverSocketPath)
     , processSharedMemFd(-1)
     , globalSharedMemFd(-1)
@@ -75,7 +76,7 @@ CoreArbiterClient::~CoreArbiterClient()
  * all threads in its process.
  *
  * This request for cores is handled asynchronously by the server. See
- * blockUntilCoreAvailable() and getOwnedCoreCount() for how to actually place
+ * blockUntilCoreAvailable() and getnumOwnedCores() for how to actually place
  * a thread on a core and check how many cores the process currently owns.
  *
  * Throws a ClientException on error.
@@ -188,7 +189,7 @@ CoreArbiterClient::blockUntilCoreAvailable()
             return coreId;
         } else {
             coreReleaseCount++;
-            ownedCoreCount--;
+            numOwnedCores--;
 
             if (coreReleasePendingCount > 0) {
                 coreReleasePendingCount--;
@@ -202,12 +203,14 @@ CoreArbiterClient::blockUntilCoreAvailable()
 
     LOG(NOTICE, "Thread %d is blocking until message received from server\n",
         sys->gettid());
+    numBlockedThreads++;
     coreId = -1;
     readData(serverSocket, &coreId, sizeof(core_t),
              "Error receiving core ID from server");
     
     LOG(NOTICE, "Thread %d woke up on core %lu.\n", sys->gettid(), coreId);
-    ownedCoreCount++;
+    numOwnedCores++;
+    numBlockedThreads--;
 
     return coreId;
 }
@@ -240,13 +243,9 @@ CoreArbiterClient::unregisterThread()
  * on a core.
  */
 uint32_t
-CoreArbiterClient::getOwnedCoreCount()
+CoreArbiterClient::getNumOwnedCores()
 {
-    if (serverSocket < 0) {
-        createNewServerConnection();
-    }
-
-    return processStats->numOwnedCores;
+    return numOwnedCores.load();
 }
 
 /**
@@ -256,11 +255,7 @@ CoreArbiterClient::getOwnedCoreCount()
 uint32_t
 CoreArbiterClient::getNumBlockedThreads()
 {
-    if (serverSocket < 0) {
-        createNewServerConnection();
-    }
-
-    return processStats->numBlockedThreads;
+    return numBlockedThreads.load();
 }
 
 /**

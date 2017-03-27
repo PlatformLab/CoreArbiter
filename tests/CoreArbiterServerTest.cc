@@ -169,7 +169,7 @@ TEST_F(CoreArbiterServerTest, defaultCores) {
 
 TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
@@ -216,13 +216,13 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
@@ -245,13 +245,13 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
@@ -279,13 +279,13 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     ASSERT_EQ(process->stats->numOwnedCores, 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {}, false);
@@ -337,13 +337,13 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     }
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, false);
     std::vector<ProcessInfo*> processes;
@@ -367,7 +367,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     }
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
 
     for (ProcessInfo* process : processes) {
         delete process->stats;
@@ -376,7 +376,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
 
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
 
@@ -428,7 +428,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     ASSERT_EQ(otherProcess->stats->numOwnedCores, 2u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
 
     for (ProcessInfo* process : processes) {
         delete process->stats;
@@ -437,7 +437,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
 
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4}, false);
 
@@ -469,7 +469,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     highPriorityProcess->desiredCorePriorities[6] = 4;
     server.distributeCores();
     ASSERT_EQ(lowPriorityProcess->stats->coreReleaseRequestCount, 1u);
-    ASSERT_EQ(server.timerFdToProcessId.size(), 1u);
+    ASSERT_EQ(server.timerFdToInfo.size(), 1u);
     ASSERT_EQ(highPriorityProcess->stats->numOwnedCores, 3u);
 
     // Higher priority threads aren't placed on a core before the preempted
@@ -478,16 +478,16 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     ASSERT_EQ(highPriorityProcess->stats->numOwnedCores, 3u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
 
     for (ProcessInfo* process : processes) {
         delete process->stats;
     }
 }
 
-TEST_F(CoreArbiterServerTest, preemptCore) {
+TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSend = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
     server.preemptionTimeout = 1; // For faster testing
@@ -514,7 +514,32 @@ TEST_F(CoreArbiterServerTest, preemptCore) {
     ASSERT_EQ(process->stats->numOwnedCores, 0u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSend = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
+}
+
+TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_invalidateOldTimeout) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
+
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+
+
+    ProcessStats processStats;
+    CoreInfo* core = server.exclusiveCores[0];
+
+    ProcessInfo* process = createProcess(server, 1, &processStats);
+    ThreadInfo* thread = createThread(
+        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, core);
+
+    // Simulate a timer going off for a process who previously released a core
+    process->coreReleaseCount = 1;
+    server.timerFdToInfo[1] = {1, 1};
+    server.timeoutThreadPreemption(1);
+
+    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
 }
 
 TEST_F(CoreArbiterServerTest, cleanupConnection) {

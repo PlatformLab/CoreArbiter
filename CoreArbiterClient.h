@@ -56,7 +56,7 @@ class CoreArbiterClient {
     bool mustReleaseCore();
     bool threadPreempted();
     core_t blockUntilCoreAvailable();
-    uint32_t getOwnedCoreCount();
+    uint32_t getNumOwnedCores();
     void unregisterThread();
 
     // Meant for testing, not general use
@@ -83,7 +83,7 @@ class CoreArbiterClient {
     typedef std::unique_lock<std::mutex> Lock;
 
     // A mutex for locking around accesses to coreReleaseRequestCount,
-    // coreReleaseCount, and ownedCoreCount, since they are shared across
+    // coreReleaseCount, and numOwnedCores, since they are shared across
     // threads.
     std::mutex mutex;
 
@@ -101,16 +101,28 @@ class CoreArbiterClient {
     std::atomic<uint64_t> coreReleasePendingCount;
 
     // The number of cores that this processes currently owns, i.e. the number
-    // of threads that it has running exclusively on cores.
-    uint32_t ownedCoreCount;
+    // of threads that it has running exclusively on cores. This value is also
+    // in shared memory, but it's useful to have a local copy to know the
+    // current state of the system from the client's perspective (since socket
+    // communication lags behind shared memory).
+    std::atomic<uint32_t> numOwnedCores;
+
+    // The number of threads this process currently has blocked waiting to be
+    // woken up by the server. This value is also in shared memory, but it's
+    // useful to have a local copy to know the current state of the system from
+    // the client's perspective (since socket communication lags behind shared
+    // memory).
+    std::atomic<uint32_t> numBlockedThreads;
 
     // The path to the socket that the CoreArbiterServer is listening on.
     std::string serverSocketPath;
 
-    // The file descriptor whose file contains coreReleaseRequestCount. This
-    // file is mmapped more fast access.
+    // The file descriptor whose file contains process-specific information.
+    // This is mmapped for fast access.
     int processSharedMemFd;
 
+    // The file descriptor whose file contains global information aboub all
+    // clients connected to the server. This is mmapped for fast access.
     int globalSharedMemFd;
 
     // The socket file descriptor used to communicate with the server. Every
@@ -119,7 +131,8 @@ class CoreArbiterClient {
 
     // The ID of the core that this thread is running on. A value of -1
     // indicates that the server has not assigned a core to this thread. Every
-    // thread has its own coreId.
+    // thread has its own coreId. This ID is NOT accurate for threads that have
+    // been preempted from their dedicated core.
     static thread_local core_t coreId;
 
     // Used for all syscalls for easier unit testing.

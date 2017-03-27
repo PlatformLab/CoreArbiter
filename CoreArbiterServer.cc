@@ -37,7 +37,7 @@ Syscall* CoreArbiterServer::sys = &defaultSyscall;
 CoreArbiterServer* volatile CoreArbiterServer::mostRecentInstance = NULL;
 bool CoreArbiterServer::testingSkipCpusetAllocation = false;
 bool CoreArbiterServer::testingSkipCoreDistribution = false;
-bool CoreArbiterServer::testingSkipSend = false;
+bool CoreArbiterServer::testingSkipSocketCommunication = false;
 bool CoreArbiterServer::testingSkipMemoryDeallocation = false;
 
 /**
@@ -178,6 +178,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         LOG(ERROR, "Error on global stats mmap: %s\n", strerror(errno));
         exit(-1);
     }
+    stats->numUnoccupiedCores = (uint32_t)exclusiveCores.size();
 
     // Set up unix domain socket
     listenSocket = sys->socket(AF_UNIX, SOCK_STREAM, 0);
@@ -361,8 +362,8 @@ bool CoreArbiterServer::handleEvents()
         } else if (socket == listenSocket) {
             // A new thread is connecting
             acceptConnection(listenSocket);
-        } else if (timerFdToProcessId.find(socket)
-                    != timerFdToProcessId.end()) {
+        } else if (timerFdToInfo.find(socket)
+                    != timerFdToInfo.end()) {
             // Core retrieval timer timeout
             timeoutThreadPreemption(socket);
             sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
@@ -404,6 +405,8 @@ bool CoreArbiterServer::handleEvents()
 void
 CoreArbiterServer::acceptConnection(int listenSocket)
 {
+    // TimeTrace::record("Starting acceptConnection");
+
     struct sockaddr_un remoteAddr;
     socklen_t len = sizeof(struct sockaddr_un);
     int socket =
@@ -507,9 +510,16 @@ CoreArbiterServer::acceptConnection(int listenSocket)
 
     LOG(NOTICE, "Registered thread with id %d on process %d\n",
            threadId, processId);
+
+    // TimeTrace::record("Finished acceptConnection");
 }
 
-
+/**
+ * Registers a thread as blocked so that it can be assigned to an exclusive
+ * core. If appropriate, this method also reassigns cores. Note that this method
+ * can cause inconsistent state between the server and client if the client does
+ * not call recv() after it sends its blocking message to the server.
+ */
 void
 CoreArbiterServer::threadBlocking(int socket)
 {
@@ -564,14 +574,17 @@ CoreArbiterServer::threadBlocking(int socket)
         LOG(NOTICE, "Preempted thread %d is blocking\n", thread->id);
         process->coreReleaseCount++;
         process->stats->unpreemptedCount++;
+        shouldDistributeCores = false;
     } else if (thread->state == RUNNING_PREEMPTED && !processOwesCore) {
-        LOG(WARNING, "Inconsistent state! Thread %d was preempted, but its "
-                     "process does not owe a core.\n", thread->id);
+        LOG(ERROR, "Inconsistent state! Thread %d was preempted, but its "
+                   "process does not owe a core.\n", thread->id);
         process->stats->unpreemptedCount++;
     }
 
     changeThreadState(thread, BLOCKED);
     process->stats->numBlockedThreads++;
+    LOG(DEBUG, "Process %d now has %u blocked threads\n",
+        process->id, process->stats->numBlockedThreads.load());
      if (shouldDistributeCores) {
         distributeCores();
     }
@@ -635,24 +648,28 @@ CoreArbiterServer::coresRequested(int socket)
 void
 CoreArbiterServer::timeoutThreadPreemption(int timerFd)
 {
-    uint64_t time;
-    read(timerFd, &time, sizeof(uint64_t));
+    if (!testingSkipSocketCommunication) {
+        uint64_t time;
+        read(timerFd, &time, sizeof(uint64_t));
+    }
 
-    pid_t processId = timerFdToProcessId[timerFd];
-    if (processIdToInfo.find(processId) == processIdToInfo.end()) {
+    struct TimerInfo* timer = &timerFdToInfo[timerFd];
+    if (processIdToInfo.find(timer->processId) == processIdToInfo.end()) {
         // This process is no longer registered with the server
         LOG(NOTICE, "Core retrieval timer went off for process %d, which "
-                    "is no longer registered with the server", processId);
+            "is no longer registered with the server", timer->processId);
         return;
     }
-    struct ProcessInfo* process = processIdToInfo[processId];
+    struct ProcessInfo* process = processIdToInfo[timer->processId];
 
-    if (process->stats->coreReleaseRequestCount == process->coreReleaseCount) {
+    if (process->coreReleaseCount >= timer->coreReleaseRequestCount) {
         // This process gave up the core it was supposed to
         LOG(NOTICE, "Core retrieval timer went off for process %d, but process "
             "already released the core it was supposed to.\n", process->id);
         return;
     }
+
+    // TimeTrace::record("Timing out thread preemption");
 
     LOG(NOTICE, "Core retrieval timer went off for process %d. Moving one of "
                 "its threads to the unmanaged core.\n", process->id);
@@ -671,6 +688,8 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
     process->stats->preemptedCount++;
 
     distributeCores();
+
+    // TimeTrace::record("Finished thread preemption");
 }
 
 void
@@ -767,7 +786,8 @@ CoreArbiterServer::distributeCores()
     // exclusive that should be placed on cores
     std::deque<struct ThreadInfo*> threadsToReceiveCores;
 
-    // Keep track of the threads that are already exclusive and should remain so
+    // Keep track of the threads that are already exclusive and should remain
+    // so. Threads that will be preempted do not make it into this set.
     std::unordered_set<struct ThreadInfo*> threadsAlreadyExclusive;
 
     // Iterate from highest to lowest priority
@@ -839,7 +859,8 @@ CoreArbiterServer::distributeCores()
                     threadAdded = true;
 
                     // Temporarily remove the thread from the process's set of
-                    // threads so that we don't double count it
+                    // threads so that we don't assign it to a core more than
+                    // once
                     threadSet->erase(thread);
 
                     if (threadsToReceiveCores.size() +
@@ -852,6 +873,8 @@ CoreArbiterServer::distributeCores()
             }
         }
     }
+
+    // TimeTrace::record("Finished deciding which threads to put on cores");
 
     // Add threads back to the correct sets in their process
     for (struct ThreadInfo* thread : threadsToReceiveCores) {
@@ -883,9 +906,7 @@ CoreArbiterServer::distributeCores()
                 process->stats->unpreemptedCount++;
             } else {
                 // Thread was blocked
-                process->stats->numBlockedThreads--;
-
-                if (!testingSkipSend) {
+                if (!testingSkipSocketCommunication) {
                     // Wake up the thread
                     if (!sendData(thread->socket, &core->id, sizeof(core_t),
                                   "Error sending core ID to thread " +
@@ -894,6 +915,10 @@ CoreArbiterServer::distributeCores()
                     }
                     LOG(DEBUG, "Sent wakeup\n");
                 }
+
+                process->stats->numBlockedThreads--;
+                LOG(DEBUG, "Process %d now has %u blocked threads\n",
+                    process->id, process->stats->numBlockedThreads.load());
             }
         } else if (threadsAlreadyExclusive.find(core->exclusiveThread) !=
                    threadsAlreadyExclusive.end()) {
@@ -955,7 +980,8 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
         return;
     }
 
-    timerFdToProcessId[timerFd] = process->id;
+    timerFdToInfo[timerFd] = { process->id,
+                               process->stats->coreReleaseRequestCount.load() };
 }
 
 bool
@@ -1126,7 +1152,7 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
             // try to move a legitimate thread.
             LOG(ERROR, "Unable to write %d to cpuset file for core %lu\n",
                 thread->id, core->id);
-            usleep(750); // TODO: don't just hard-code this
+            usleep(750);
         }
     }
 
@@ -1138,7 +1164,7 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
     struct ProcessInfo* process = thread->process;
     process->stats->numOwnedCores++;
 
-    stats->numUnoccupiedCores++;
+    stats->numUnoccupiedCores--;
 }
 
 void
@@ -1149,17 +1175,20 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
             thread->id);
     }
 
+    // TimeTrace::record("Removing thread from exclusive core");
+
     if (!testingSkipCpusetAllocation) {
         // Writing a thread to a new cpuset automatically removes it from the
         // one it belonged to before
         unmanagedCore.cpusetFile << thread->id;
         unmanagedCore.cpusetFile.flush();
         if (unmanagedCore.cpusetFile.bad()) {
-            // TODO: handle this elegantly. It shouldn't happen, so I'm killing
-            // the server for now.
+            // This error is likely because the thread has exited. Sleeping
+            // helps keep the kernel from giving more errors the next time we
+            // try to move a legitimate thread.
             LOG(ERROR, "Unable to write %d to cpuset file for core %lu\n",
                 thread->id, unmanagedCore.id);
-            // exit(-1);
+            usleep(750);
         }
     }
 
@@ -1168,7 +1197,9 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
     thread->core = NULL;
     exclusiveThreads.erase(thread);
 
-    stats->numUnoccupiedCores--;
+    stats->numUnoccupiedCores++;
+
+    // TimeTrace::record("Finished removing thread from exclusive core");
 }
 
 void
