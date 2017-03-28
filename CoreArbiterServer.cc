@@ -713,6 +713,7 @@ CoreArbiterServer::cleanupConnection(int socket)
         if (process->coreReleaseCount < process->stats->coreReleaseRequestCount) {
             process->coreReleaseCount++;
         }
+        stats->numUnoccupiedCores++;
         shouldDistributeCores = true;
     } else if (thread->state == RUNNING_PREEMPTED) {
         if (process->coreReleaseCount < process->stats->coreReleaseRequestCount) {
