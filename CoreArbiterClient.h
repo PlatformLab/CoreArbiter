@@ -56,14 +56,15 @@ class CoreArbiterClient {
     bool mustReleaseCore();
     bool threadPreempted();
     core_t blockUntilCoreAvailable();
-    uint32_t getNumOwnedCores();
+    uint32_t getNumOwnedCores();-
     void unregisterThread();
 
     // Meant for testing, not general use
+    uint32_t getNumOwnedCoresFromServer();
+    uint32_t getNumBlockedThreadsFromServer();
     uint32_t getNumBlockedThreads();
     size_t getNumUnoccupiedCores();
     uint32_t getNumProcessesOnServer();
-
 
     class ClientException: public std::runtime_error {
       public:
@@ -87,8 +88,14 @@ class CoreArbiterClient {
     // threads.
     std::mutex mutex;
 
+    // Information about this processes in shared memory. The server uses this
+    // struct to communicate with the client about whether it should release a
+    // core and whether it has a thread preempted.
     struct ProcessStats* processStats;
 
+    // Information about all processes connected to the same server as this
+    // client in shared memory. This is useful primarily for debugging and
+    // benchmarking.
     struct GlobalStats* globalStats;
 
     // A monotonically increasing count of the number of cores this process has

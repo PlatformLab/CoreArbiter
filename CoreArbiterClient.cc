@@ -229,7 +229,7 @@ CoreArbiterClient::unregisterThread()
         return;
     }
 
-    printf("Unregistering thread %d\n", sys->gettid());
+    LOG(NOTICE, "Unregistering thread %d\n", sys->gettid());
 
     // Closing this socket alerts the server, which will clean up this thread's
     // state
@@ -240,7 +240,21 @@ CoreArbiterClient::unregisterThread()
 
 /**
  * Returns the number of threads this process owns that are running exclusively
- * on a core.
+ * on a core, from the server's perspective.
+ */
+uint32_t
+CoreArbiterClient::getNumOwnedCoresFromServer()
+{
+    if (serverSocket < 0) {
+        createNewServerConnection();
+    }
+
+    return processStats->numOwnedCores.load();
+}
+
+/**
+ * Returns the number of threads this process owns that are running exclusively
+ * on a core, from the client's perspective.
  */
 uint32_t
 CoreArbiterClient::getNumOwnedCores()
@@ -250,7 +264,21 @@ CoreArbiterClient::getNumOwnedCores()
 
 /**
  * Returns the number of threads belonging to this process that are currently
- * blocked waiting on a core.
+ * blocked waiting on a core, from the server's perspective.
+ */
+uint32_t
+CoreArbiterClient::getNumBlockedThreadsFromServer()
+{
+    if (serverSocket < 0) {
+        createNewServerConnection();
+    }
+
+    return processStats->numBlockedThreads.load();
+}
+
+/**
+ * Returns the number of threads belonging to this process that are currently
+ * blocked waiting on a core, from the client's perspective.
  */
 uint32_t
 CoreArbiterClient::getNumBlockedThreads()

@@ -14,9 +14,10 @@
  */
 
 #include <assert.h>
+#include <sched.h>
+#include <signal.h>
 #include <sys/un.h>
 #include <sys/eventfd.h>
-#include <signal.h>
 
 #include <thread>
 #include <iostream>
@@ -25,6 +26,7 @@
 #include "CoreArbiterServer.h"
 #include "Logger.h"
 // #include "PerfUtils/TimeTrace.h"
+// #include "PerfUtils/Util.h"
 
 // using PerfUtils::TimeTrace;
 
@@ -350,6 +352,9 @@ bool CoreArbiterServer::handleEvents()
         return true;
     }
 
+    // PerfUtils::Util::serialize();
+    // TimeTrace::record("SERVER: After epoll_wait");
+
     for (int i = 0; i < numFds; i++) {
         int socket = events[i].data.fd;
 
@@ -405,7 +410,7 @@ bool CoreArbiterServer::handleEvents()
 void
 CoreArbiterServer::acceptConnection(int listenSocket)
 {
-    // TimeTrace::record("Starting acceptConnection");
+    // TimeTrace::record("SERVER: Starting acceptConnection");
 
     struct sockaddr_un remoteAddr;
     socklen_t len = sizeof(struct sockaddr_un);
@@ -511,7 +516,7 @@ CoreArbiterServer::acceptConnection(int listenSocket)
     LOG(NOTICE, "Registered thread with id %d on process %d\n",
            threadId, processId);
 
-    // TimeTrace::record("Finished acceptConnection");
+    // TimeTrace::record("SERVER: Finished acceptConnection");
 }
 
 /**
@@ -523,7 +528,7 @@ CoreArbiterServer::acceptConnection(int listenSocket)
 void
 CoreArbiterServer::threadBlocking(int socket)
 {
-    // TimeTrace::record("Start handling thread blocking request");
+    // TimeTrace::record("SERVER: Start handling thread blocking request");
 
     if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
         LOG(WARNING, "Unknown thread is blocking\n");
@@ -589,14 +594,15 @@ CoreArbiterServer::threadBlocking(int socket)
         distributeCores();
     }
 
-    // TimeTrace::record("Finished thread blocking request");
+    // TimeTrace::record("SERVER: Finished thread blocking request");
 }
 
 void
 CoreArbiterServer::coresRequested(int socket)
 {
-    // TimeTrace::record("Starting to serve core request");
+    // TimeTrace::record("SERVER: Starting to serve core request");
 
+    // TODO: maybe combine this and the original read into one read
     uint32_t numCoresArr[NUM_PRIORITIES];
     if (!readData(socket, &numCoresArr, sizeof(uint32_t) * NUM_PRIORITIES,
                  "Error receiving number of cores requested")) {
@@ -642,7 +648,7 @@ CoreArbiterServer::coresRequested(int socket)
         distributeCores();
     }
 
-    // TimeTrace::record("Finished serving core request");
+    // TimeTrace::record("SERVER: Finished serving core request");
 }
 
 void
@@ -669,7 +675,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
         return;
     }
 
-    // TimeTrace::record("Timing out thread preemption");
+    // TimeTrace::record("SERVER: Timing out thread preemption");
 
     LOG(NOTICE, "Core retrieval timer went off for process %d. Moving one of "
                 "its threads to the unmanaged core.\n", process->id);
@@ -689,7 +695,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
 
     distributeCores();
 
-    // TimeTrace::record("Finished thread preemption");
+    // TimeTrace::record("SERVER: Finished thread preemption");
 }
 
 void
@@ -773,7 +779,7 @@ CoreArbiterServer::cleanupConnection(int socket)
 void
 CoreArbiterServer::distributeCores()
 {
-    // TimeTrace::record("Starting core distribution");
+    // TimeTrace::record("SERVER: Starting core distribution");
 
     if (testingSkipCoreDistribution) {
         LOG(DEBUG, "Skipping core distribution\n");
@@ -875,7 +881,7 @@ CoreArbiterServer::distributeCores()
         }
     }
 
-    // TimeTrace::record("Finished deciding which threads to put on cores");
+    // TimeTrace::record("SERVER: Finished deciding which threads to put on cores");
 
     // Add threads back to the correct sets in their process
     for (struct ThreadInfo* thread : threadsToReceiveCores) {
@@ -909,11 +915,13 @@ CoreArbiterServer::distributeCores()
                 // Thread was blocked
                 if (!testingSkipSocketCommunication) {
                     // Wake up the thread
+                    // TimeTrace::record("SERVER: Sending wakeup");
                     if (!sendData(thread->socket, &core->id, sizeof(core_t),
                                   "Error sending core ID to thread " +
                                         std::to_string(thread->id))) {
                         return;
                     }
+                    // TimeTrace::record("SERVER: Finished sending wakeup\n");
                     LOG(DEBUG, "Sent wakeup\n");
                 }
 
@@ -935,16 +943,21 @@ CoreArbiterServer::distributeCores()
         }
     }
 
-    // TimeTrace::record("Finished core distribution");
+    // TimeTrace::record("SERVER: Finished core distribution");
 }
 
 void
 CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
 {
+    // TODO: Setting up this timer takes ~3us. Could be optimized by keeping
+    // a single timer for everything.
+
     if (!core->exclusiveThread) {
         LOG(WARNING, "There is no thread on core %lu to preempt\n", core->id);
         return;
     }
+
+    // TimeTrace::record("SERVER: Requesting core release");
 
     struct ProcessInfo* process = core->exclusiveThread->process;
     LOG(NOTICE, "Starting preemption of thread belonging to process %d "
@@ -983,6 +996,8 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
 
     timerFdToInfo[timerFd] = { process->id,
                                process->stats->coreReleaseRequestCount.load() };
+
+    // TimeTrace::record("SERVER: Finished requesting core release");
 }
 
 bool
@@ -1144,7 +1159,8 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
                                              struct CoreInfo* core)
 {
     if (!testingSkipCpusetAllocation) {
-        core->cpusetFile.seekp(0);
+        // TimeTrace::record("SERVER: Moving thread to exclusive cpuset");
+
         core->cpusetFile << thread->id;
         core->cpusetFile.flush();
         if (core->cpusetFile.bad()) {
@@ -1155,6 +1171,8 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
                 thread->id, core->id);
             usleep(750);
         }
+
+        // TimeTrace::record("SERVER: Finished moving thread to exclusive cpuset");
     }
 
     changeThreadState(thread, RUNNING_EXCLUSIVE);
@@ -1171,16 +1189,20 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
 void
 CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
 {
+    // For unknown reasons, this sometimes takes 6us and sometimes takes 14us.
+    // It likely has something to do with how the kernel handles moving
+    // processes between cpusets.
+
     if (!thread->core) {
         LOG(WARNING, "Thread %d was already on unmanaged core\n",
             thread->id);
     }
 
-    // TimeTrace::record("Removing thread from exclusive core");
-
     if (!testingSkipCpusetAllocation) {
         // Writing a thread to a new cpuset automatically removes it from the
         // one it belonged to before
+        // TimeTrace::record("SERVER: Removing thread from exclusive cpuset");
+
         unmanagedCore.cpusetFile << thread->id;
         unmanagedCore.cpusetFile.flush();
         if (unmanagedCore.cpusetFile.bad()) {
@@ -1191,6 +1213,8 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
                 thread->id, unmanagedCore.id);
             usleep(750);
         }
+
+        // TimeTrace::record("SERVER: Finished removing thread from exclusive cpuset");
     }
 
     thread->process->stats->numOwnedCores--;
@@ -1199,8 +1223,6 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
     exclusiveThreads.erase(thread);
 
     stats->numUnoccupiedCores++;
-
-    // TimeTrace::record("Finished removing thread from exclusive core");
 }
 
 void

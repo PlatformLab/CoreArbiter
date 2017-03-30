@@ -19,7 +19,7 @@
 using namespace CoreArbiter;
 
 int main() {
-	Logger::setLogLevel(DEBUG);
+	Logger::setLogLevel(ERROR);
     CoreArbiterServer server("/tmp/CoreArbiter/testsocket",
                              "/tmp/CoreArbiter/testmem",
                              {1,2});
