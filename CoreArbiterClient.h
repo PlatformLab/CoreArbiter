@@ -56,7 +56,7 @@ class CoreArbiterClient {
     bool mustReleaseCore();
     bool threadPreempted();
     core_t blockUntilCoreAvailable();
-    uint32_t getNumOwnedCores();-
+    uint32_t getNumOwnedCores();
     void unregisterThread();
 
     // Meant for testing, not general use

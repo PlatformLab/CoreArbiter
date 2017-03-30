@@ -555,7 +555,7 @@ CoreArbiterServer::threadBlocking(int socket)
             thread->id, thread->core->id);
         process->coreReleaseCount++;
         struct CoreInfo* core = thread->core;
-        removeThreadFromExclusiveCore(thread);
+        removeThreadFromExclusiveCore(thread, false);
 
         auto& runningPreemptedSet =
             thread->process->threadStateToSet[RUNNING_PREEMPTED];
@@ -715,14 +715,15 @@ CoreArbiterServer::cleanupConnection(int socket)
         exclusiveThreads.erase(thread);
         thread->core->exclusiveThread = NULL;
         process->stats->numOwnedCores--;
-        // removeThreadFromExclusiveCore(thread);
-        if (process->coreReleaseCount < process->stats->coreReleaseRequestCount) {
+        if (process->coreReleaseCount <
+                process->stats->coreReleaseRequestCount) {
             process->coreReleaseCount++;
         }
         stats->numUnoccupiedCores++;
         shouldDistributeCores = true;
     } else if (thread->state == RUNNING_PREEMPTED) {
-        if (process->coreReleaseCount < process->stats->coreReleaseRequestCount) {
+        if (process->coreReleaseCount <
+                process->stats->coreReleaseRequestCount) {
             process->coreReleaseCount++;
             process->stats->unpreemptedCount++;
         } else {
@@ -1187,7 +1188,8 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
 }
 
 void
-CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
+CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread,
+                                                 bool changeCpuset)
 {
     // For unknown reasons, this sometimes takes 6us and sometimes takes 14us.
     // It likely has something to do with how the kernel handles moving
@@ -1198,7 +1200,7 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
             thread->id);
     }
 
-    if (!testingSkipCpusetAllocation) {
+    if (changeCpuset && !testingSkipCpusetAllocation) {
         // Writing a thread to a new cpuset automatically removes it from the
         // one it belonged to before
         // TimeTrace::record("SERVER: Removing thread from exclusive cpuset");
@@ -1214,7 +1216,8 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread)
             usleep(750);
         }
 
-        // TimeTrace::record("SERVER: Finished removing thread from exclusive cpuset");
+        // TimeTrace::record("SERVER: Finished removing thread from exclusive "
+                          "cpuset");
     }
 
     thread->process->stats->numOwnedCores--;

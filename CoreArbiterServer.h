@@ -208,7 +208,8 @@ class CoreArbiterServer {
     void removeOldCpusets(std::string arbiterCpusetPath);
     void moveThreadToExclusiveCore(struct ThreadInfo* thread,
                                    struct CoreInfo* core);
-    void removeThreadFromExclusiveCore(struct ThreadInfo* thread);
+    void removeThreadFromExclusiveCore(struct ThreadInfo* thread,
+                                       bool changeCpuset=true);
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
     void installSignalHandler();
