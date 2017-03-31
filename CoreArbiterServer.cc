@@ -1217,7 +1217,7 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread,
         }
 
         // TimeTrace::record("SERVER: Finished removing thread from exclusive "
-                          "cpuset");
+//                          "cpuset");
     }
 
     thread->process->stats->numOwnedCores--;
