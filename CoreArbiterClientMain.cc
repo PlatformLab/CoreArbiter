@@ -28,7 +28,7 @@ using namespace CoreArbiter;
   * This thread will get unblocked when a core is allocated, and will block
   * itself again when the number of cores is decreased.
   */
-void coreExec(CoreArbiterClient& client) {    
+void coreExec(CoreArbiterClient& client) {
     client.setNumCores({1,0,0,0,0,0,0,0});
     client.blockUntilCoreAvailable();
     client.setNumCores({0,0,0,0,0,0,0,0});

@@ -207,7 +207,7 @@ CoreArbiterClient::blockUntilCoreAvailable()
     coreId = -1;
     readData(serverSocket, &coreId, sizeof(core_t),
              "Error receiving core ID from server");
-    
+
     LOG(NOTICE, "Thread %d woke up on core %lu.\n", sys->gettid(), coreId);
     numOwnedCores++;
     numBlockedThreads--;

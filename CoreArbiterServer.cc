@@ -373,6 +373,7 @@ bool CoreArbiterServer::handleEvents()
             timeoutThreadPreemption(socket);
             sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
                            socket, &events[i]);
+            sys->close(socket);
         } else if (socket == terminationFd) {
             return false;
         }
@@ -899,12 +900,12 @@ CoreArbiterServer::distributeCores()
             struct ThreadInfo* thread = threadsToReceiveCores.front();
             threadsToReceiveCores.pop_front();
             struct ProcessInfo* process = thread->process;
-            
+
             LOG(NOTICE, "Granting core %lu to thread %d from process %d\n",
                    core->id, thread->id, process->id);
 
             // Move the thread before waking it up so that it wakes up in its
-            // new cpuset 
+            // new cpuset
             ThreadState prevState = thread->state;
             moveThreadToExclusiveCore(thread, core);
 
@@ -1032,7 +1033,7 @@ CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
 void CoreArbiterServer::createCpuset(std::string dirName, std::string cores,
                                      std::string mems)
 {
-    if (sys->mkdir(dirName.c_str(), 
+    if (sys->mkdir(dirName.c_str(),
                   S_IRUSR | S_IWUSR | S_IXUSR |
                   S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) < 0) {
         LOG(ERROR, "Error creating cpuset directory at %s: %s\n",
@@ -1110,7 +1111,7 @@ CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
     // Remove all processes from a cpuset
     for (struct dirent* entry = sys->readdir(dir); entry != NULL;
          entry = sys->readdir(dir)) {
-        
+
         if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
             std::string dirName = arbiterCpusetPath + "/" +
                                   std::string(entry->d_name);

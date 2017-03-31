@@ -426,7 +426,7 @@ class MockSyscall : public Syscall {
     int unlinkErrno;
     int unlink(const char* pathname) {
         if (unlinkErrno == 0) {
-            ::unlink(pathname);    
+            ::unlink(pathname);
         }
         errno = unlinkErrno;
         return -1;

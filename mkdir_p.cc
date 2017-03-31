@@ -14,14 +14,14 @@ int mkdir_p(const char *path, mode_t mode)
     /* Adapted from http://stackoverflow.com/a/2336245/119527 */
     const size_t len = strlen(path);
     char _path[PATH_MAX];
-    char *p; 
+    char *p;
 
     errno = 0;
 
     /* Copy string so its mutable */
     if (len > sizeof(_path)-1) {
         errno = ENAMETOOLONG;
-        return -1; 
+        return -1;
     }
     strcpy(_path, path);
 
@@ -33,7 +33,7 @@ int mkdir_p(const char *path, mode_t mode)
 
             if (mkdir(_path, mode) != 0) {
                 if (errno != EEXIST)
-                    return -1; 
+                    return -1;
             }
 
             *p = '/';
@@ -42,7 +42,7 @@ int mkdir_p(const char *path, mode_t mode)
 
     if (mkdir(_path, mode) != 0) {
         if (errno != EEXIST)
-            return -1; 
+            return -1;
     }
     return 0;
 }
