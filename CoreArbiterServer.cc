@@ -93,7 +93,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
 
     // If exclusiveCoreIds is empty, populate it with everything except
     // core 0
-    unsigned numCores = std::thread::hardware_concurrency();
+    int numCores = std::thread::hardware_concurrency();
     if (exclusiveCoreIds.empty()) {
         for (core_t id = 1; id < numCores; id++) {
             exclusiveCoreIds.push_back(id);
@@ -552,7 +552,7 @@ CoreArbiterServer::threadBlocking(int socket)
 
 
     if (thread->state == RUNNING_EXCLUSIVE && processOwesCore) {
-        LOG(NOTICE, "Removing thread %d from core %lu\n",
+        LOG(NOTICE, "Removing thread %d from core %d\n",
             thread->id, thread->core->id);
         process->coreReleaseCount++;
         struct CoreInfo* core = thread->core;
@@ -901,7 +901,7 @@ CoreArbiterServer::distributeCores()
             threadsToReceiveCores.pop_front();
             struct ProcessInfo* process = thread->process;
 
-            LOG(NOTICE, "Granting core %lu to thread %d from process %d\n",
+            LOG(NOTICE, "Granting core %d to thread %d from process %d\n",
                    core->id, thread->id, process->id);
 
             // Move the thread before waking it up so that it wakes up in its
@@ -934,7 +934,7 @@ CoreArbiterServer::distributeCores()
         } else if (threadsAlreadyExclusive.find(core->exclusiveThread) !=
                    threadsAlreadyExclusive.end()) {
             // This thread is supposed to have a core, so do nothing.
-            LOG(NOTICE, "Keeping thread %d on core %lu\n",
+            LOG(NOTICE, "Keeping thread %d on core %d\n",
                    core->exclusiveThread->id, core->id);
         } else if (core->exclusiveThread) {
             // The thread on this core needs to be preempted. It will be
@@ -955,7 +955,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
     // a single timer for everything.
 
     if (!core->exclusiveThread) {
-        LOG(WARNING, "There is no thread on core %lu to preempt\n", core->id);
+        LOG(WARNING, "There is no thread on core %d to preempt\n", core->id);
         return;
     }
 
@@ -963,7 +963,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
 
     struct ProcessInfo* process = core->exclusiveThread->process;
     LOG(NOTICE, "Starting preemption of thread belonging to process %d "
-        "on core %lu\n", process->id, core->id);
+        "on core %d\n", process->id, core->id);
 
     // Tell the process that it needs to release a core
     process->stats->coreReleaseRequestCount += 1;
@@ -1169,7 +1169,7 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
             // This error is likely because the thread has exited. Sleeping
             // helps keep the kernel from giving more errors the next time we
             // try to move a legitimate thread.
-            LOG(ERROR, "Unable to write %d to cpuset file for core %lu\n",
+            LOG(ERROR, "Unable to write %d to cpuset file for core %d\n",
                 thread->id, core->id);
             usleep(750);
         }
@@ -1212,7 +1212,7 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread,
             // This error is likely because the thread has exited. Sleeping
             // helps keep the kernel from giving more errors the next time we
             // try to move a legitimate thread.
-            LOG(ERROR, "Unable to write %d to cpuset file for core %lu\n",
+            LOG(ERROR, "Unable to write %d to cpuset file for core %d\n",
                 thread->id, unmanagedCore.id);
             usleep(750);
         }
