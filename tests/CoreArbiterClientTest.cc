@@ -108,7 +108,7 @@ TEST_F(CoreArbiterClientTest, setNumCores) {
 
     uint32_t requestArr[NUM_PRIORITIES];
     recv(serverSocket, requestArr, sizeof(requestArr), 0);
-    
+
     for (uint32_t i = 0; i < NUM_PRIORITIES; i++) {
         ASSERT_EQ(requestArr[i], i);
     }
@@ -121,7 +121,7 @@ TEST_F(CoreArbiterClientTest, mustReleaseCore) {
     processStats.coreReleaseRequestCount = 1;
     ASSERT_TRUE(client.mustReleaseCore());
     ASSERT_EQ(client.coreReleasePendingCount, 1u);
-    
+
     // Simulate a blockUntilCoreAvailable() call
     client.coreReleaseCount++;
     client.coreReleasePendingCount--;
