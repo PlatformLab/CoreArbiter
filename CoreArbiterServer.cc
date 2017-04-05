@@ -41,6 +41,7 @@ bool CoreArbiterServer::testingSkipCpusetAllocation = false;
 bool CoreArbiterServer::testingSkipCoreDistribution = false;
 bool CoreArbiterServer::testingSkipSocketCommunication = false;
 bool CoreArbiterServer::testingSkipMemoryDeallocation = false;
+bool CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
 
 /**
  * Constructs a CoreArbiterServer object and sets up all necessary state for
@@ -83,6 +84,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     , globalSharedMemFd(-1)
     , epollFd(-1)
     , preemptionTimeout(RELEASE_TIMEOUT_MS)
+    , alwaysUnmanagedString("")
+    , cpusetUpdateTimeout(CPUSET_UPDATE_TIMEOUT_MS)
     , corePriorityQueues(NUM_PRIORITIES)
     , terminationFd(eventfd(0, 0))
 {
@@ -93,10 +96,30 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
 
     // If exclusiveCoreIds is empty, populate it with everything except
     // core 0
-    int numCores = std::thread::hardware_concurrency();
-    if (exclusiveCoreIds.empty()) {
-        for (core_t id = 1; id < numCores; id++) {
-            exclusiveCoreIds.push_back(id);
+    unsigned int numCores = std::thread::hardware_concurrency();
+    if (!testingDoNotChangeExclusiveCores) {
+        if (exclusiveCoreIds.empty() || exclusiveCoreIds.size() == numCores) {
+            // If no exclusive cores are specified or if every core is given,
+            // make every core available to be exclusive except for CPU 0. We
+            // need to ensure that at least one core remains unmanaged so that
+            // the arbiter has something to run on.
+            exclusiveCoreIds.clear();
+            for (core_t id = 1; id < (core_t)numCores; id++) {
+                exclusiveCoreIds.push_back(id);
+            }
+            alwaysUnmanagedString = "0";
+        } else {
+            alwaysUnmanagedString = "";
+            std::sort(exclusiveCoreIds.begin(), exclusiveCoreIds.end());
+            size_t idx = 0;
+            for (core_t i = 0; i < (core_t)numCores; i++) {
+                if (idx < exclusiveCoreIds.size() &&
+                        exclusiveCoreIds[idx] == i) {
+                    idx++;
+                } else {
+                    alwaysUnmanagedString += std::to_string(i) + ",";
+                }
+            }
         }
     }
 
@@ -118,22 +141,30 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             createCpuset(exclusiveCpusetPath, std::to_string(core), "0");
         }
 
-        // Set up cpuset for all other processes. For now, core 0 is always
-        // unmanaged.
+        // Set up the unmanaged cpuset. This starts with all cores and is
+        // scaled down as processes ask for exclusive cores.
         std::string unmanagedCpusetPath = arbiterCpusetPath + "/Unmanaged";
-        createCpuset(unmanagedCpusetPath, "0", "0");
+        createCpuset(unmanagedCpusetPath, allCores, "0");
 
         // Move all of the currently running processes to the unmanaged cpuset
         std::string allProcsPath = cpusetPath + "/cgroup.procs";
         std::string unmanagedProcsPath = unmanagedCpusetPath + "/cgroup.procs";
         moveProcsToCpuset(allProcsPath, unmanagedProcsPath);
 
-        // Cpusets should be set up properly now, so we'll save the files needed
-        // for moving processes between cpusets
+        // Set up the file we will use to control how many cores are in the
+        // unmanaged cpuset.
+        std::string unmanagedCpusPath = unmanagedCpusetPath + "/cpuset.cpus";
+        unmanagedCpusetCpus.open(unmanagedCpusPath);
+        if (!unmanagedCpusetCpus.is_open()) {
+            LOG(ERROR, "Unable to open %s\n", unmanagedCpusPath.c_str());
+            exit(-1);
+        }
+
+        // Set up the file we will use to control which threads are in the
+        // unmanaged cpuset.
         std::string unmanagedTasksPath = unmanagedCpusetPath + "/tasks";
-        unmanagedCore.id = 0;
-        unmanagedCore.cpusetFile.open(unmanagedTasksPath);
-        if (!unmanagedCore.cpusetFile.is_open()) {
+        unmanagedCpusetTasks.open(unmanagedTasksPath);
+        if (!unmanagedCpusetTasks.is_open()) {
             LOG(ERROR, "Unable to open %s\n", unmanagedTasksPath.c_str());
             exit(-1);
         }
@@ -153,7 +184,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             }
         }
 
-        exclusiveCores.push_back(core);
+        unmanagedCores.push_back(core);
     }
 
     ensureParents(socketPath.c_str(), 0777);
@@ -180,7 +211,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         LOG(ERROR, "Error on global stats mmap: %s\n", strerror(errno));
         exit(-1);
     }
-    stats->numUnoccupiedCores = (uint32_t)exclusiveCores.size();
+    stats->numUnoccupiedCores = (uint32_t)unmanagedCores.size();
 
     // Set up unix domain socket
     listenSocket = sys->socket(AF_UNIX, SOCK_STREAM, 0);
@@ -343,7 +374,12 @@ CoreArbiterServer::endArbitration()
 bool CoreArbiterServer::handleEvents()
 {
     struct epoll_event events[MAX_EPOLL_EVENTS];
-    int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS, -1);
+    uint64_t msSinceLastCpusetUpdate = Cycles::toMilliseconds(
+        Cycles::rdtsc() - unmanagedCpusetLastUpdate);
+    uint64_t nextCpusetUpdate = msSinceLastCpusetUpdate >= cpusetUpdateTimeout ?
+        0 : cpusetUpdateTimeout - msSinceLastCpusetUpdate;
+    int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS,
+                                 (int)nextCpusetUpdate);
     if (numFds < 0) {
         // Interrupted system calls are normal, so there is no need to log them
         // as errors.
@@ -360,7 +396,7 @@ bool CoreArbiterServer::handleEvents()
 
         if (events[i].events & EPOLLRDHUP) {
             // A thread exited or otherwise closed its connection
-            LOG(NOTICE, "detected closed connection for fd %d\n", socket);
+            LOG(NOTICE, "Detected closed connection for fd %d\n", socket);
             sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
                            socket, &events[i]);
             cleanupConnection(socket);
@@ -405,6 +441,38 @@ bool CoreArbiterServer::handleEvents()
 
         LOG(NOTICE, "\n");
     }
+
+    // Update the unmanaged cpuset if we haven't in a while
+    msSinceLastCpusetUpdate =
+        Cycles::toMilliseconds(Cycles::rdtsc() - unmanagedCpusetLastUpdate);
+    if (msSinceLastCpusetUpdate >= cpusetUpdateTimeout) {
+        bool cpusetChanged = false;
+        uint64_t now = Cycles::rdtsc();
+
+        for (auto coreIter = exclusiveCores.begin();
+             coreIter != exclusiveCores.end();) {
+            struct CoreInfo* core = *coreIter;
+            if (!core->exclusiveThread && Cycles::toMilliseconds(
+                    now - core->threadRemovalTime) >= cpusetUpdateTimeout) {
+                // This core hasn't been used as an exclusive core in a while,
+                // so we'll move it to the unmanaged cpuset
+                LOG(NOTICE, "Moving core %d to the unmanaged cpuset\n",
+                    core->id);
+                exclusiveCores.erase(coreIter);
+                unmanagedCores.push_back(core);
+                cpusetChanged = true;
+            } else {
+                coreIter++;
+            }
+        }
+        unmanagedCpusetLastUpdate = now;
+
+        if (cpusetChanged) {
+            updateUnmanagedCpuset();
+            LOG(NOTICE, "\n");
+        }
+    }
+
     return true;
 }
 
@@ -539,7 +607,6 @@ CoreArbiterServer::threadBlocking(int socket)
     struct ThreadInfo* thread = threadSocketToInfo[socket];
     LOG(NOTICE, "Thread %d is blocking\n", thread->id);
 
-
     if (thread->state == BLOCKED) {
         LOG(WARNING, "Thread %d was already blocked\n", thread->id);
         return;
@@ -549,7 +616,6 @@ CoreArbiterServer::threadBlocking(int socket)
     bool processOwesCore =
         process->stats->coreReleaseRequestCount > process->coreReleaseCount;
     bool shouldDistributeCores = true;
-
 
     if (thread->state == RUNNING_EXCLUSIVE && processOwesCore) {
         LOG(NOTICE, "Removing thread %d from core %d\n",
@@ -715,6 +781,7 @@ CoreArbiterServer::cleanupConnection(int socket)
     if (thread->state == RUNNING_EXCLUSIVE) {
         exclusiveThreads.erase(thread);
         thread->core->exclusiveThread = NULL;
+        thread->core->threadRemovalTime = Cycles::rdtsc();
         process->stats->numOwnedCores--;
         if (process->coreReleaseCount <
                 process->stats->coreReleaseRequestCount) {
@@ -746,6 +813,7 @@ CoreArbiterServer::cleanupConnection(int socket)
             break;
         }
     }
+
     if (noRemainingThreads) {
         LOG(NOTICE, "All of process %d's threads have exited. Removing all "
             "process records.\n", process->id);
@@ -790,6 +858,8 @@ CoreArbiterServer::distributeCores()
 
     LOG(NOTICE, "Distributing cores among threads...\n");
 
+    size_t maxExclusiveCores = exclusiveCores.size() + unmanagedCores.size();
+
     // First, find the threads that should receive cores.
     // This is a queue (front has higher priority) of threads not currently
     // exclusive that should be placed on cores
@@ -828,7 +898,7 @@ CoreArbiterServer::distributeCores()
                 processToCoreCount[process]++;
 
                 if (threadsToReceiveCores.size() +
-                      threadsAlreadyExclusive.size() == exclusiveCores.size()) {
+                      threadsAlreadyExclusive.size() == maxExclusiveCores) {
                     coresFilled = true;
                     break;
                 }
@@ -874,7 +944,7 @@ CoreArbiterServer::distributeCores()
 
                     if (threadsToReceiveCores.size() +
                             threadsAlreadyExclusive.size() ==
-                                exclusiveCores.size()) {
+                                maxExclusiveCores) {
                         coresFilled = true;
                         break;
                     }
@@ -883,6 +953,7 @@ CoreArbiterServer::distributeCores()
         }
     }
 
+
     // TimeTrace::record("SERVER: Finished deciding which threads to put on cores");
 
     // Add threads back to the correct sets in their process
@@ -890,10 +961,26 @@ CoreArbiterServer::distributeCores()
         thread->process->threadStateToSet[thread->state].insert(thread);
     }
 
-    // Assign cores to threads
-    for (size_t i = 0; i < exclusiveCores.size(); i++) {
-        struct CoreInfo* core = exclusiveCores[i];
+    size_t numAssignedCores =
+        threadsToReceiveCores.size() + threadsAlreadyExclusive.size();
+    if (numAssignedCores > exclusiveCores.size()) {
+        // We need to make more cores exclusive
+        size_t numCoresToMakeExclusive =
+            numAssignedCores - exclusiveCores.size();
+        LOG(NOTICE, "Making %lu cores exclusive\n", numCoresToMakeExclusive);
+        exclusiveCores.insert(exclusiveCores.end(),
+                              unmanagedCores.end() - numCoresToMakeExclusive,
+                              unmanagedCores.end());
+        unmanagedCores.erase(unmanagedCores.end() - numCoresToMakeExclusive,
+                              unmanagedCores.end());
 
+        // Update the unmanaged cpuset now so that threads it will be updated
+        // by the time we wake up exclusive threads
+        updateUnmanagedCpuset();
+    }
+
+    // Assign cores to threads
+    for (struct CoreInfo* core : exclusiveCores) {
         if (!core->exclusiveThread && !threadsToReceiveCores.empty()) {
             // This core is available. Give it to a thread not already on
             // a core.
@@ -935,7 +1022,7 @@ CoreArbiterServer::distributeCores()
                    threadsAlreadyExclusive.end()) {
             // This thread is supposed to have a core, so do nothing.
             LOG(NOTICE, "Keeping thread %d on core %d\n",
-                   core->exclusiveThread->id, core->id);
+                core->exclusiveThread->id, core->id);
         } else if (core->exclusiveThread) {
             // The thread on this core needs to be preempted. It will be
             // assigned to a new thread (one of the ones at the end of
@@ -1172,6 +1259,7 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
             LOG(ERROR, "Unable to write %d to cpuset file for core %d\n",
                 thread->id, core->id);
             usleep(750);
+            return;
         }
 
         // TimeTrace::record("SERVER: Finished moving thread to exclusive cpuset");
@@ -1206,27 +1294,50 @@ CoreArbiterServer::removeThreadFromExclusiveCore(struct ThreadInfo* thread,
         // one it belonged to before
         // TimeTrace::record("SERVER: Removing thread from exclusive cpuset");
 
-        unmanagedCore.cpusetFile << thread->id;
-        unmanagedCore.cpusetFile.flush();
-        if (unmanagedCore.cpusetFile.bad()) {
+        unmanagedCpusetTasks << thread->id;
+        unmanagedCpusetTasks.flush();
+        if (unmanagedCpusetTasks.bad()) {
             // This error is likely because the thread has exited. Sleeping
             // helps keep the kernel from giving more errors the next time we
             // try to move a legitimate thread.
-            LOG(ERROR, "Unable to write %d to cpuset file for core %d\n",
-                thread->id, unmanagedCore.id);
+            LOG(ERROR, "Unable to write %d to unmanaged cpuset file\n",
+                thread->id);
             usleep(750);
         }
 
         // TimeTrace::record("SERVER: Finished removing thread from exclusive "
-//                          "cpuset");
+        //                   "cpuset");
     }
 
     thread->process->stats->numOwnedCores--;
     thread->core->exclusiveThread = NULL;
+    thread->core->threadRemovalTime = Cycles::rdtsc();
     thread->core = NULL;
     exclusiveThreads.erase(thread);
 
     stats->numUnoccupiedCores++;
+}
+
+void CoreArbiterServer::updateUnmanagedCpuset() {
+    if (testingSkipCpusetAllocation) {
+        return;
+    }
+
+    std::string unmanagedCoresString = alwaysUnmanagedString;
+    for (CoreInfo* core : unmanagedCores) {
+        unmanagedCoresString += std::to_string(core->id) + ",";
+    }
+
+    LOG(DEBUG, "Changing unmanaged cpuset to %s\n",
+        unmanagedCoresString.c_str());
+    unmanagedCpusetCpus << unmanagedCoresString;
+
+    if (unmanagedCpusetCpus.bad()) {
+        LOG(ERROR, "Error changing unmanaged cpuset cpus\n");
+        // usleep(750);
+        // unmanagedCpusetCpus << unmanagedCoresString;
+        exit(-1); // TODO: handle elegantly
+    }
 }
 
 void
@@ -1244,7 +1355,6 @@ CoreArbiterServer::changeThreadState(struct ThreadInfo* thread,
   */
 void invokeGDB(int signum) {
     char buf[256];
-    snprintf(buf, sizeof(buf), "/usr/bin/gdb -p %d",  getpid());
     int ret = system(buf);
 
     if (ret == -1) {

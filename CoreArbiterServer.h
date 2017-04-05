@@ -29,8 +29,11 @@
 
 #include "CoreArbiterCommon.h"
 #include "Syscall.h"
+#include "PerfUtils/Cycles.h"
 
 #define MAX_EPOLL_EVENTS 1000
+
+using PerfUtils::Cycles;
 
 namespace CoreArbiter {
 
@@ -71,6 +74,8 @@ class CoreArbiterServer {
         // A stream pointing to the tasks file of this core's exclusive cpuset.
         std::ofstream cpusetFile;
 
+        uint64_t threadRemovalTime;
+
         CoreInfo()
             : exclusiveThread(NULL)
         {}
@@ -78,6 +83,7 @@ class CoreArbiterServer {
         CoreInfo(core_t id)
             : id(id)
             , exclusiveThread(NULL)
+            , threadRemovalTime(~0)
         {}
     };
 
@@ -210,6 +216,7 @@ class CoreArbiterServer {
                                    struct CoreInfo* core);
     void removeThreadFromExclusiveCore(struct ThreadInfo* thread,
                                        bool changeCpuset=true);
+    void updateUnmanagedCpuset();
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
     void installSignalHandler();
@@ -252,12 +259,15 @@ class CoreArbiterServer {
     // manages. This is set up upon server construction and does not change.
     std::vector<struct CoreInfo*> exclusiveCores;
 
+    std::vector<struct CoreInfo*> unmanagedCores;
+    std::ofstream unmanagedCpusetCpus;
+    std::ofstream unmanagedCpusetTasks;
+    std::string alwaysUnmanagedString;
+    uint64_t unmanagedCpusetLastUpdate;
+    uint64_t cpusetUpdateTimeout;
+
     // A set of the threads currently running on cores in exclusiveCores.
     std::unordered_set<struct ThreadInfo*> exclusiveThreads;
-
-    // Information about the unmanaged core. This is established on server
-    // connection and does not change.
-    struct CoreInfo unmanagedCore;
 
     // The smallest index in the vector is the highest priority and the first
     // entry in the deque is the process that requested a core at that priority
@@ -279,6 +289,7 @@ class CoreArbiterServer {
     static bool testingSkipCoreDistribution;
     static bool testingSkipSocketCommunication;
     static bool testingSkipMemoryDeallocation;
+    static bool testingDoNotChangeExclusiveCores;
 };
 
 }
