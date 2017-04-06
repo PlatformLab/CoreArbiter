@@ -29,8 +29,11 @@
 
 #include "CoreArbiterCommon.h"
 #include "Syscall.h"
+#include "PerfUtils/Cycles.h"
 
 #define MAX_EPOLL_EVENTS 1000
+
+using PerfUtils::Cycles;
 
 namespace CoreArbiter {
 
@@ -71,6 +74,11 @@ class CoreArbiterServer {
         // A stream pointing to the tasks file of this core's exclusive cpuset.
         std::ofstream cpusetFile;
 
+        // The last time (in cycles) that this core had a thread removed from
+        // it. If there is no thread running on this core, this value tells us
+        // how long the core has been unoccupied.
+        uint64_t threadRemovalTime;
+
         CoreInfo()
             : exclusiveThread(NULL)
         {}
@@ -78,6 +86,7 @@ class CoreArbiterServer {
         CoreInfo(core_t id)
             : id(id)
             , exclusiveThread(NULL)
+            , threadRemovalTime(0)
         {}
     };
 
@@ -210,6 +219,7 @@ class CoreArbiterServer {
                                    struct CoreInfo* core);
     void removeThreadFromExclusiveCore(struct ThreadInfo* thread,
                                        bool changeCpuset=true);
+    void updateUnmanagedCpuset();
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
     void installSignalHandler();
@@ -248,16 +258,41 @@ class CoreArbiterServer {
     // Maps process IDs to their associated processes.
     std::unordered_map<pid_t, struct ProcessInfo*> processIdToInfo;
 
-    // Contains the information for all the exclusive cores that this server
-    // manages. This is set up upon server construction and does not change.
+    // Contains the information about cores that are not currently in the
+    // unmanaged cpuset. This vector grows with cores from unmanagedCores when
+    // the arbiter is loaded and shrinks when there are fewer cores being used.
     std::vector<struct CoreInfo*> exclusiveCores;
+
+    // Contains the information about cores that are currently in the unmanaged
+    // cpuset. At startup, this vector contains all cores controlled by the
+    // arbiter. It shrinks as cores are requested and grows when cores are
+    // unused for an extended period.
+    std::vector<struct CoreInfo*> unmanagedCores;
+
+    // The file used to change which cores belong to the unmanaged cpuset.
+    std::ofstream unmanagedCpusetCpus;
+
+    // The file used to change which threads are running on the unmanaged
+    // cpuset.
+    std::ofstream unmanagedCpusetTasks;
+
+    // A comma-delimited string of CPU IDs for cores not under the arbiter's
+    // control.
+    std::string alwaysUnmanagedString;
+
+    // The last time (in cycles) that the unmanaged cpuset's set of cores was
+    // updated.
+    uint64_t unmanagedCpusetLastUpdate;
+
+    // The minimum amount of time (in milliseconds) to wait before adding an
+    // unoccupied core to the unmanaged cpuset. Also the minimum amount of time
+    // to wait before updating the unmanaged cpuset's cores. This timeout is
+    // necessary to make sure we don't change the unmanaged cpuset too often, as
+    // doing so will cause the kernel to throw errors.
+    uint64_t cpusetUpdateTimeout;
 
     // A set of the threads currently running on cores in exclusiveCores.
     std::unordered_set<struct ThreadInfo*> exclusiveThreads;
-
-    // Information about the unmanaged core. This is established on server
-    // connection and does not change.
-    struct CoreInfo unmanagedCore;
 
     // The smallest index in the vector is the highest priority and the first
     // entry in the deque is the process that requested a core at that priority
@@ -279,6 +314,7 @@ class CoreArbiterServer {
     static bool testingSkipCoreDistribution;
     static bool testingSkipSocketCommunication;
     static bool testingSkipMemoryDeallocation;
+    static bool testingDoNotChangeExclusiveCores;
 };
 
 }
