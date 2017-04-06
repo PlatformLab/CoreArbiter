@@ -197,13 +197,20 @@ CoreArbiterClient::blockUntilCoreAvailable()
         }
     }
 
+    numBlockedThreads++;
+
     uint8_t threadBlockMsg = THREAD_BLOCK;
-    sendData(serverSocket, &threadBlockMsg, sizeof(uint8_t),
-             "Error sending block message");
+    if (sys->send(serverSocket, &threadBlockMsg, sizeof(uint8_t), 0) < 0) {
+        numBlockedThreads--;
+
+        std::string err = "Error sending block message";
+        std::string fullErrStr = err + ": " + std::string(strerror(errno));
+        LOG(ERROR, "%s\n", fullErrStr.c_str());
+        throw ClientException(err);
+    }
 
     LOG(NOTICE, "Thread %d is blocking until message received from server\n",
         sys->gettid());
-    numBlockedThreads++;
     coreId = -1;
     readData(serverSocket, &coreId, sizeof(core_t),
              "Error receiving core ID from server");
