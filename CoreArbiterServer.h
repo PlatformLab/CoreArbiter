@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "CoreArbiterCommon.h"
+#include "Logger.h"
 #include "Syscall.h"
 #include "PerfUtils/Cycles.h"
 
@@ -71,6 +72,9 @@ class CoreArbiterServer {
         // the core is available or unmanaged.
         struct ThreadInfo* exclusiveThread;
 
+        // The name of this core's exclusive cpuset tasks file.
+        std::string cpusetFilename;
+
         // A stream pointing to the tasks file of this core's exclusive cpuset.
         std::ofstream cpusetFile;
 
@@ -83,11 +87,20 @@ class CoreArbiterServer {
             : exclusiveThread(NULL)
         {}
 
-        CoreInfo(core_t id)
+        CoreInfo(core_t id, std::string exclusiveTasksPath)
             : id(id)
             , exclusiveThread(NULL)
+            , cpusetFilename(exclusiveTasksPath)
             , threadRemovalTime(0)
-        {}
+        {
+            if (!testingSkipCpusetAllocation) {
+                cpusetFile.open(cpusetFilename);
+                if (!cpusetFile.is_open()) {
+                    LOG(ERROR, "Unable to open %s\n", cpusetFilename.c_str());
+                    exit(-1);
+                }
+            }
+        }
     };
 
     /**
@@ -215,7 +228,7 @@ class CoreArbiterServer {
     void createCpuset(std::string dirName, std::string cores, std::string mems);
     void moveProcsToCpuset(std::string fromPath, std::string toPath);
     void removeOldCpusets(std::string arbiterCpusetPath);
-    void moveThreadToExclusiveCore(struct ThreadInfo* thread,
+    bool moveThreadToExclusiveCore(struct ThreadInfo* thread,
                                    struct CoreInfo* core);
     void removeThreadFromExclusiveCore(struct ThreadInfo* thread,
                                        bool changeCpuset=true);

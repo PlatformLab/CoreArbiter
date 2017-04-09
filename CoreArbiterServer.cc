@@ -24,7 +24,6 @@
 #include <algorithm>
 
 #include "CoreArbiterServer.h"
-#include "Logger.h"
 // #include "PerfUtils/TimeTrace.h"
 // #include "PerfUtils/Util.h"
 
@@ -173,17 +172,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     for (core_t coreId : exclusiveCoreIds) {
         std::string exclusiveTasksPath = arbiterCpusetPath + "/Exclusive" +
                                          std::to_string(coreId) + "/tasks";
-
-        struct CoreInfo* core = new CoreInfo(coreId);
-
-        if (!testingSkipCpusetAllocation) {
-            core->cpusetFile.open(exclusiveTasksPath);
-            if (!core->cpusetFile.is_open()) {
-                LOG(ERROR, "Unable to open %s\n", exclusiveTasksPath.c_str());
-                exit(-1);
-            }
-        }
-
+        struct CoreInfo* core = new CoreInfo(coreId, exclusiveTasksPath);
         unmanagedCores.push_back(core);
     }
 
@@ -994,7 +983,17 @@ CoreArbiterServer::distributeCores()
             // Move the thread before waking it up so that it wakes up in its
             // new cpuset
             ThreadState prevState = thread->state;
-            moveThreadToExclusiveCore(thread, core);
+            if (!moveThreadToExclusiveCore(thread, core)) {
+                // We were probably unable to move this thread to an exclusive
+                // core because it has exited. To handle this case, it is
+                // easiest to leave this core unoccupied for now, since we will
+                // receive a hangup message from the thread's socket at which
+                // point distributeCores() will be called again and this core
+                // will be filled.
+                LOG(NOTICE, "Skipping assignment of core %d because were were "
+                            "unable to write to it\n", core->id);
+                continue;
+            }
 
             if (prevState == RUNNING_PREEMPTED) {
                 LOG(NOTICE, "Thread %d was previously running preempted on the "
@@ -1244,7 +1243,7 @@ CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
     }
 }
 
-void
+bool
 CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
                                              struct CoreInfo* core)
 {
@@ -1254,13 +1253,14 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
         core->cpusetFile << thread->id;
         core->cpusetFile.flush();
         if (core->cpusetFile.bad()) {
-            // This error is likely because the thread has exited. Sleeping
-            // helps keep the kernel from giving more errors the next time we
-            // try to move a legitimate thread.
+            // This error is likely because the thread has exited. We need to
+            // close and reopen the file to prevent future errors.
             LOG(ERROR, "Unable to write %d to cpuset file for core %d\n",
                 thread->id, core->id);
-            usleep(750);
-            return;
+            core->cpusetFile.close();
+            core->cpusetFile.clear();
+            core->cpusetFile.open(core->cpusetFilename);
+            return false;
         }
 
         // TimeTrace::record("SERVER: Finished moving thread to exclusive cpuset");
@@ -1270,11 +1270,10 @@ CoreArbiterServer::moveThreadToExclusiveCore(struct ThreadInfo* thread,
     thread->core = core;
     core->exclusiveThread = thread;
     exclusiveThreads.insert(thread);
-
-    struct ProcessInfo* process = thread->process;
-    process->stats->numOwnedCores++;
-
+    thread->process->stats->numOwnedCores++;
     stats->numUnoccupiedCores--;
+
+    return true;
 }
 
 void
