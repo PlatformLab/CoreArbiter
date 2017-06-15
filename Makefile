@@ -1,5 +1,6 @@
 CCFLAGS=-g -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -std=c++11
-LIBS=-IPerfUtils PerfUtils/libPerfUtils.a -pthread
+INCLUDE=-IPerfUtils
+LIBS=${INCLUDE} PerfUtils/libPerfUtils.a -pthread
 CC = g++
 
 all: server client
@@ -32,7 +33,7 @@ Logger.o: Logger.h Logger.cc
 	$(CC) $(CCFLAGS) -O3 -c Logger.cc
 
 %.o: %.cc
-	g++ $(CCFLAGS) -O3  $(LIBS) -fPIC -c -std=c++11 -o $@ $<
+	g++ $(CCFLAGS) -O3  $(INCLUDE) -fPIC -c -std=c++11 -o $@ $<
 
 clean:
 	rm -f *.o *.a server client
