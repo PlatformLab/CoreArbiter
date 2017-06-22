@@ -106,7 +106,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             for (core_t id = 1; id < (core_t)numCores; id++) {
                 exclusiveCoreIds.push_back(id);
             }
-            alwaysUnmanagedString = "0";
+            alwaysUnmanagedString = "0,";
         } else {
             alwaysUnmanagedString = "";
             std::sort(exclusiveCoreIds.begin(), exclusiveCoreIds.end());
@@ -1330,7 +1330,7 @@ void CoreArbiterServer::updateUnmanagedCpuset() {
 
     LOG(DEBUG, "Changing unmanaged cpuset to %s\n",
         unmanagedCoresString.c_str());
-    unmanagedCpusetCpus << unmanagedCoresString;
+    unmanagedCpusetCpus << unmanagedCoresString << std::endl;
 
     if (unmanagedCpusetCpus.bad()) {
         LOG(ERROR, "Error changing unmanaged cpuset cpus\n");
