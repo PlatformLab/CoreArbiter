@@ -29,8 +29,9 @@
 *.app
 client
 server
-tests/CoreArbiterClientTest
-tests/CoreArbiterServerTest
 
 # Misc files
 tags
+
+# Object files
+obj/

@@ -1,39 +1,77 @@
-CCFLAGS=-g -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer -std=c++11
-INCLUDE=-IPerfUtils
-LIBS=${INCLUDE} PerfUtils/libPerfUtils.a -pthread
-CC = g++
+CC=g++
+CCFLAGS=-g -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings \
+-Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend \
+-Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer \
+-std=c++11 -fPIC -O3
 
-all: server client
+# Output directories
+OBJECT_DIR = obj
+SRC_DIR = src
+INCLUDE_DIR = include
+LIB_DIR = lib
+BIN_DIR = bin
 
-server: CoreArbiterServer.o CoreArbiterServerMain.o mkdir_p.o Logger.o
+# Depenencies
+PERFUTILS=../PerfUtils
+INCLUDE=-I$(PERFUTILS)/include
+LIBS=$(PERFUTILS)/lib/libPerfUtils.a -pthread
+
+
+OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o
+HEADER_NAMES =  CoreArbiterClient.h CoreArbiterServer.h
+
+OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
+HEADERS= $(patsubst %,$(SRC_DIR)/%,$(HEADER_NAMES))
+
+SERVER_BIN = $(OBJECT_DIR)/server
+CLIENT_BIN =  $(OBJECT_DIR)/client
+
+install: $(SERVER_BIN) $(CLIENT_BIN)
+	mkdir -p $(BIN_DIR) $(LIB_DIR) $(INCLUDE_DIR)/CoreArbiter
+	cp $(HEADERS) $(INCLUDE_DIR)/CoreArbiter
+	cp $(SERVER_BIN) $(CLIENT_BIN) bin
+	cp $(OBJECT_DIR)/libCoreArbiter.a lib
+
+$(SERVER_BIN): $(OBJECT_DIR)/CoreArbiterServerMain.o $(OBJECT_DIR)/libCoreArbiter.a
 	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
 
-client:  CoreArbiterClientMain.o libCoreArbiter.a
+$(CLIENT_BIN): $(OBJECT_DIR)/CoreArbiterClientMain.o $(OBJECT_DIR)/libCoreArbiter.a
 	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
 
-libCoreArbiter.a: CoreArbiterClient.o CoreArbiterServer.o mkdir_p.o Logger.o
+$(OBJECT_DIR)/libCoreArbiter.a: $(OBJECTS)
 	ar rcs $@ $^	
 
-test: CoreArbiterServer.o
-	make -C tests
+$(OBJECT_DIR)/%.o: $(SRC_DIR)/%.cc $(HEADERS) | $(OBJECT_DIR)
+	$(CC) $(INCLUDE) $(CCFLAGS) -c $< -o $@
 
-CoreArbiterServerMain.o: CoreArbiterServerMain.cc
-	$(CC) $(CCFLAGS) -O3 -c CoreArbiterServerMain.cc
+$(OBJECT_DIR):
+	mkdir -p $(OBJECT_DIR)
 
-CoreArbiterServer.o: CoreArbiterServer.h CoreArbiterServer.cc CoreArbiterCommon.h
-	$(CC) $(CCFLAGS) -O3 -c CoreArbiterServer.cc
+################################################################################
+# Test Targets
 
-CoreArbiterClientMain.o: CoreArbiterClientMain.cc
-	$(CC) $(CCFLAGS) -O3 -c CoreArbiterClientMain.cc
+GTEST_DIR=../googletest/googletest
+TEST_LIBS=-Lobj/ -lCoreArbiter $(OBJECT_DIR)/libgtest.a
+INCLUDE+=-I${GTEST_DIR}/include
 
-CoreArbiterClient.o: CoreArbiterClient.h CoreArbiterClient.cc CoreArbiterCommon.h
-	$(CC) $(CCFLAGS) -fPIC  -O3 -c CoreArbiterClient.cc
+test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest
+	sudo $(OBJECT_DIR)/CoreArbiterServerTest
+	$(OBJECT_DIR)/CoreArbiterClientTest
 
-Logger.o: Logger.h Logger.cc
-	$(CC) $(CCFLAGS) -O3 -c Logger.cc
+$(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
+	$(CC) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
-%.o: %.cc
-	g++ $(CCFLAGS) -O3  $(INCLUDE) -fPIC -c -std=c++11 -o $@ $<
+$(OBJECT_DIR)/CoreArbiterClientTest: $(OBJECT_DIR)/CoreArbiterClientTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
+	$(CC) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
+
+$(OBJECT_DIR)/libgtest.a:
+	g++ -I${GTEST_DIR}/include -I${GTEST_DIR} \
+		-pthread -c ${GTEST_DIR}/src/gtest-all.cc \
+		-o $(OBJECT_DIR)/gtest-all.o
+	ar -rv $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/gtest-all.o
+################################################################################
 
 clean:
-	rm -f *.o *.a server client
+	rm -rf obj bin lib
+
+.PHONY: install clean
