@@ -48,6 +48,7 @@ bool CoreArbiterClient::testingSkipConnectionSetup = false;
 CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
     : mutex()
     , coreReleaseCount(0)
+    , coreReleasePendingCount(0)
     , numOwnedCores(0)
     , numBlockedThreads(0)
     , serverSocketPath(serverSocketPath)
