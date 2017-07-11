@@ -18,10 +18,9 @@ LIBS=$(PERFUTILS)/lib/libPerfUtils.a -pthread
 
 
 OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o
-HEADER_NAMES =  CoreArbiterClient.h CoreArbiterServer.h
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
-HEADERS= $(patsubst %,$(SRC_DIR)/%,$(HEADER_NAMES))
+HEADERS= $(shell find src -name '*.h')
 
 SERVER_BIN = $(OBJECT_DIR)/server
 CLIENT_BIN =  $(OBJECT_DIR)/client
