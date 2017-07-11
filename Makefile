@@ -21,6 +21,7 @@ OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')
+DEP=$(OBJECTS:.o=.d)
 
 SERVER_BIN = $(OBJECT_DIR)/server
 CLIENT_BIN =  $(OBJECT_DIR)/client
@@ -39,6 +40,11 @@ $(CLIENT_BIN): $(OBJECT_DIR)/CoreArbiterClientMain.o $(OBJECT_DIR)/libCoreArbite
 
 $(OBJECT_DIR)/libCoreArbiter.a: $(OBJECTS)
 	ar rcs $@ $^	
+
+-include $(DEP)
+
+$(OBJECT_DIR)/%.d: $(SRC_DIR)/%.cc | $(OBJECT_DIR)
+	$(CC) $(INCLUDE) $(CCFLAGS) $< -MM -MT $(@:.d=.o) > $@
 
 $(OBJECT_DIR)/%.o: $(SRC_DIR)/%.cc $(HEADERS) | $(OBJECT_DIR)
 	$(CC) $(INCLUDE) $(CCFLAGS) -c $< -o $@
