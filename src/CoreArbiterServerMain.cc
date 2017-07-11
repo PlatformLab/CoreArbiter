@@ -22,7 +22,7 @@ using namespace CoreArbiter;
 
 std::string socketPath = "/tmp/CoreArbiter/testsocket";
 std::string sharedMemoryPath = "/tmp/CoreArbiter/testmem";
-std::vector<core_t> coresUsed = {1,2};
+std::vector<core_t> coresUsed = std::vector<core_t>();
 
 /**
   * This function currently supports only long options.
