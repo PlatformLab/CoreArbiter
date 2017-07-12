@@ -31,9 +31,10 @@
 namespace CoreArbiter {
 
 /**
- * This class provides an interface for running threads on dedicated cores. We
- * say that a thread is on a dedicated core or running exclusively if it is both
- * the only userspace thread on that core and only able to run on that core.
+ * This class provides an interface for running threads on managed cores. We say
+ * that a thread is on a managed core if it can only run on that core and is the
+ * only thread that will do so. (The term "managed" comes from the fact that
+ * this invariant is enforced by the CoreArbiterServer.)
  *
  * This class is a singleton because applications are expected to manage their
  * threads in a coordinated fashion. The user only interacts with the
@@ -52,7 +53,7 @@ class CoreArbiterClient {
 
     ~CoreArbiterClient();
 
-    void setNumCores(std::vector<uint32_t> numCores);
+    void setRequestedCores(std::vector<uint32_t> numCores);
     bool mustReleaseCore();
     bool threadPreempted();
     core_t blockUntilCoreAvailable();
@@ -83,9 +84,8 @@ class CoreArbiterClient {
 
     typedef std::unique_lock<std::mutex> Lock;
 
-    // A mutex for locking around accesses to coreReleaseRequestCount,
-    // coreReleaseCount, and numOwnedCores, since they are shared across
-    // threads.
+    // Used to guard data shared across threads, such as processStats,
+    // coreReleaseCount, and coreReleasePendingCount.
     std::mutex mutex;
 
     // Information about this processes in shared memory. The server uses this
@@ -93,8 +93,8 @@ class CoreArbiterClient {
     // core and whether it has a thread preempted.
     struct ProcessStats* processStats;
 
-    // Information about all processes connected to the same server as this
-    // client in shared memory. This is useful primarily for debugging and
+    // Information in shared memory about all processes connected to the same
+    // server as this client. This is useful primarily for debugging and
     // benchmarking.
     struct GlobalStats* globalStats;
 
@@ -104,13 +104,13 @@ class CoreArbiterClient {
     std::atomic<uint64_t> coreReleaseCount;
 
     // The number of cores that the client has been told it is obligated to
-    // release
+    // release but has not yet done so.
     std::atomic<uint64_t> coreReleasePendingCount;
 
     // The number of cores that this processes currently owns, i.e. the number
-    // of threads that it has running exclusively on cores. This value is also
-    // in shared memory, but it's useful to have a local copy to know the
-    // current state of the system from the client's perspective (since socket
+    // of threads that it has running on managed cores. This value is also in
+    // shared memory, but it's useful to have a local copy to know the current
+    // state of the system from the client's perspective (since socket
     // communication lags behind shared memory).
     std::atomic<uint32_t> numOwnedCores;
 
@@ -139,12 +139,13 @@ class CoreArbiterClient {
     // The ID of the core that this thread is running on. A value of -1
     // indicates that the server has not assigned a core to this thread. Every
     // thread has its own coreId. This ID is NOT accurate for threads that have
-    // been preempted from their dedicated core.
+    // been preempted from their managed core.
     static thread_local core_t coreId;
 
     // Used for all syscalls for easier unit testing.
     static Syscall* sys;
 
+    // Useful for unit testing.
     static bool testingSkipConnectionSetup;
 };
 

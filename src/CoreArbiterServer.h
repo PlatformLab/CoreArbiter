@@ -38,11 +38,24 @@ using PerfUtils::Cycles;
 
 namespace CoreArbiter {
 
+/**
+ * This class implements a service that arbitrates core allocations amongst
+ * application. It handles a set of "managed" cores, on which only a single
+ * thread can run, and "unmanaged" cores, which obey the kernel's thread
+ * scheduling as usual. It is meant to be run as a daemon on a system. A typical
+ * use would construct a server object and call startArbitration(), which does
+ * not exit. There should be only one instance of the CoreArbiterServer on a
+ * machine at any given time.
+ *
+ * This class is tightly connected to CoreArbiterClient. Users should not
+ * attempt to connect to the server directly, but rather go through the client's
+ * API.
+ */
 class CoreArbiterServer {
   public:
     CoreArbiterServer(std::string socketPath,
                       std::string sharedMemPathPrefix,
-                      std::vector<core_t> exclusiveCores={},
+                      std::vector<core_t> managedCores={},
                       bool arbitrateImmediately=true);
     ~CoreArbiterServer();
     void startArbitration();
@@ -60,22 +73,22 @@ class CoreArbiterServer {
     /**
      * Used to keep track of all the information for a core. There is a separate
      * CoreInfo instance for every core that the server has control over (both
-     * exclusive and unmanaged). These structs are constructed when the server
+     * managed and unmanaged). These structs are constructed when the server
      * starts up and exist for the server's entire lifetime.
      */
     struct CoreInfo {
         // The ID of this core. This ID matches what would be returned by a
-        // process on this core that ran sched_getcpu().
+        // thread on this core that ran sched_getcpu().
         core_t id;
 
-        // A pointer to the thread running exclusively on this core. NULL if
-        // the core is available or unmanaged.
-        struct ThreadInfo* exclusiveThread;
+        // A pointer to the thread running on this core if the core is managed.
+        // NULL otherwise.
+        struct ThreadInfo* managedThread;
 
-        // The name of this core's exclusive cpuset tasks file.
+        // The name of this core's managed cpuset tasks file.
         std::string cpusetFilename;
 
-        // A stream pointing to the tasks file of this core's exclusive cpuset.
+        // A stream pointing to the tasks file of this core's managed cpuset.
         std::ofstream cpusetFile;
 
         // The last time (in cycles) that this core had a thread removed from
@@ -84,13 +97,13 @@ class CoreArbiterServer {
         uint64_t threadRemovalTime;
 
         CoreInfo()
-            : exclusiveThread(NULL)
+            : managedThread(NULL)
         {}
 
-        CoreInfo(core_t id, std::string exclusiveTasksPath)
+        CoreInfo(core_t id, std::string managedTasksPath)
             : id(id)
-            , exclusiveThread(NULL)
-            , cpusetFilename(exclusiveTasksPath)
+            , managedThread(NULL)
+            , cpusetFilename(managedTasksPath)
             , threadRemovalTime(0)
         {
             if (!testingSkipCpusetAllocation) {
@@ -107,15 +120,15 @@ class CoreArbiterServer {
      * Used by ThreadInfo to keep track of a thread's state.
      */
     enum ThreadState {
-        // Running on an exclusive core
-        RUNNING_EXCLUSIVE,
+        // Running on a managed core
+        RUNNING_MANAGED,
 
         // Voluntarily running on the unmanaged core (this only happens before
         // the first call to blockUntilCoreAvailable())
         RUNNING_UNMANAGED,
 
         // Running on the unmanaged core because it was forceably preempted from
-        // its excluisve core
+        // its managed core
         RUNNING_PREEMPTED,
 
         // Not running, waiting to be put on core
@@ -123,9 +136,9 @@ class CoreArbiterServer {
     };
 
     /**
-     * Keeps track of all the information for a thread. A ThreadInfo instance
-     * exists from the time that a new thread first connects with a server until
-     * that connection closes.
+     * Keeps track of all the information for a thread registered with this
+     * server. A ThreadInfo instance exists from the time that a new thread
+     * first connects with a server until that connection closes.
      */
     struct ThreadInfo {
         // The ID of this thread (self-reported when the thread first
@@ -140,8 +153,8 @@ class CoreArbiterServer {
         // thread.
         int socket;
 
-        // A pointer to the core this thread is running exclusively on. NULL
-        // if this thread is not running exclusively.
+        // A pointer to the managed core this thread is running on. NULL if this
+        // thread is not running on a managed core.
         struct CoreInfo* core;
 
         // The current state of this thread. When a thread first registers it
@@ -161,7 +174,7 @@ class CoreArbiterServer {
 
     /**
      * Keeps track of all the information for a process, including which threads
-     * belong to this process. ProcessInfo instances are generated as-needed,
+     * belong to this process. ProcessInfo instances are generated as needed,
      * when a thread registers with a proces that we have not seen before. A
      * process is not deleted from memory until all of its threads' connections
      * have closed.
@@ -173,9 +186,11 @@ class CoreArbiterServer {
         pid_t id;
 
         // The file descriptor that is mmapped into memory for communication
-        // between the process and server (see coreReleaseRequestCount below).
+        // between the process and server (see the stats struct below).
         int sharedMemFd;
 
+        // A pointer to shared memory that is used to communicate information
+        // to this process.
         struct ProcessStats* stats;
 
         // A monotonically increasing counter of the number of cores this
@@ -228,10 +243,10 @@ class CoreArbiterServer {
     void createCpuset(std::string dirName, std::string cores, std::string mems);
     void moveProcsToCpuset(std::string fromPath, std::string toPath);
     void removeOldCpusets(std::string arbiterCpusetPath);
-    bool moveThreadToExclusiveCore(struct ThreadInfo* thread,
-                                   struct CoreInfo* core);
-    void removeThreadFromExclusiveCore(struct ThreadInfo* thread,
-                                       bool changeCpuset=true);
+    bool moveThreadToManagedCore(struct ThreadInfo* thread,
+                                 struct CoreInfo* core);
+    void removeThreadFromManagedCore(struct ThreadInfo* thread,
+                                     bool changeCpuset=true);
     void updateUnmanagedCpuset();
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
@@ -249,10 +264,16 @@ class CoreArbiterServer {
     // each process. This can be either a file or directory.
     std::string sharedMemPathPrefix;
 
+    // The path to the shared memory file with global server information (see
+    // the GlobalStats struct below).
     std::string globalSharedMemPath;
 
+    // The file descriptor for the shared memory file with global server
+    // information (see the GlobalStats struct below).
     int globalSharedMemFd;
 
+    // Pointer to a struct in shared memory that contains global information
+    // about the state of all processes connected to this server.
     struct GlobalStats* stats;
 
     // The file descriptor used to block on client requests.
@@ -262,7 +283,7 @@ class CoreArbiterServer {
     std::unordered_map<int, struct TimerInfo> timerFdToInfo;
 
     // The amount of time in milliseconds to wait before forceably preempting
-    // a a thread from its exclusive core to the unmanaged core.
+    // a thread from its managed core to the unmanaged core.
     uint64_t preemptionTimeout;
 
     // Maps thread socket file desriptors to their associated threads.
@@ -274,7 +295,7 @@ class CoreArbiterServer {
     // Contains the information about cores that are not currently in the
     // unmanaged cpuset. This vector grows with cores from unmanagedCores when
     // the arbiter is loaded and shrinks when there are fewer cores being used.
-    std::vector<struct CoreInfo*> exclusiveCores;
+    std::vector<struct CoreInfo*> managedCores;
 
     // Contains the information about cores that are currently in the unmanaged
     // cpuset. At startup, this vector contains all cores controlled by the
@@ -304,12 +325,12 @@ class CoreArbiterServer {
     // doing so will cause the kernel to throw errors.
     uint64_t cpusetUpdateTimeout;
 
-    // A set of the threads currently running on cores in exclusiveCores.
-    std::unordered_set<struct ThreadInfo*> exclusiveThreads;
+    // The set of the threads currently running on cores in managedCores.
+    std::unordered_set<struct ThreadInfo*> managedThreads;
 
     // The smallest index in the vector is the highest priority and the first
-    // entry in the deque is the process that requested a core at that priority
-    // first
+    // entry in the deque is the next process that should receive a core at
+    // that priority.
     std::vector<std::deque<struct ProcessInfo*>> corePriorityQueues;
 
     // When this file descriptor is written, the core arbiter will return from
@@ -327,7 +348,7 @@ class CoreArbiterServer {
     static bool testingSkipCoreDistribution;
     static bool testingSkipSocketCommunication;
     static bool testingSkipMemoryDeallocation;
-    static bool testingDoNotChangeExclusiveCores;
+    static bool testingDoNotChangeManagedCores;
 };
 
 }

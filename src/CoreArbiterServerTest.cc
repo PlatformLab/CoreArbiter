@@ -79,19 +79,19 @@ class CoreArbiterServerTest : public ::testing::Test {
         thread->state = state;
         process->threadStateToSet[state].insert(thread);
         server.threadSocketToInfo[socket] = thread;
-        if (state == CoreArbiterServer::RUNNING_EXCLUSIVE) {
-            server.exclusiveThreads.insert(thread);
+        if (state == CoreArbiterServer::RUNNING_MANAGED) {
+            server.managedThreads.insert(thread);
             process->stats->numOwnedCores++;
             thread->core = core;
-            core->exclusiveThread = thread;
+            core->managedThread = thread;
         } else if (state == CoreArbiterServer::RUNNING_PREEMPTED) {
             process->stats->preemptedCount++;
         }
         return thread;
     }
 
-    void makeUnmanagedCoresExclusive(CoreArbiterServer& server) {
-        server.exclusiveCores.insert(server.exclusiveCores.end(),
+    void makeUnmanagedCoresManaged(CoreArbiterServer& server) {
+        server.managedCores.insert(server.managedCores.end(),
                                      server.unmanagedCores.begin(),
                                      server.unmanagedCores.end());
         server.unmanagedCores.erase(server.unmanagedCores.begin());
@@ -180,7 +180,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
     int processId = 1;
     int threadId = 2;
     int socket = 3;
@@ -208,13 +208,13 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     ASSERT_EQ(thread->state, CoreArbiterServer::BLOCKED);
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
 
-    // If the thread is running exclusively a block call should fail if the
-    // server hasn't requested cores back
+    // If the thread is running on a managed core a block call should fail if
+    // the server hasn't requested cores back
     processStats.numBlockedThreads = 0;
-    thread->core = server.exclusiveCores[0];
-    thread->state = CoreArbiterServer::RUNNING_EXCLUSIVE;
+    thread->core = server.managedCores[0];
+    thread->state = CoreArbiterServer::RUNNING_MANAGED;
     server.threadBlocking(socket);
-    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);
     ASSERT_EQ(processStats.numBlockedThreads, 0u);
 
     // If the server has requested cores back, this call succeeds
@@ -232,10 +232,10 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
 
     pid_t processId = 0;
     pid_t threadId = 1;
@@ -257,17 +257,17 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
 
     pid_t processId = 0;
     pid_t threadId1 = 1;
@@ -278,33 +278,33 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     processStats.coreReleaseRequestCount = 1;
     ProcessInfo* process = createProcess(server, processId, &processStats);
     ThreadInfo* thread1 = createThread(server, threadId1, process, socket1,
-                                       CoreArbiterServer::RUNNING_EXCLUSIVE,
-                                       server.exclusiveCores[0]);
+                                       CoreArbiterServer::RUNNING_MANAGED,
+                                       server.managedCores[0]);
     ThreadInfo* thread2 = createThread(server, threadId2, process, socket2,
                                        CoreArbiterServer::RUNNING_PREEMPTED);
 
-    // When a process with a preempted thread gives up an exclusive core, the
+    // When a process with a preempted thread gives up an managed core, the
     // preempted thread should be moved back to that core
     server.threadBlocking(socket1);
     ASSERT_EQ(thread1->state, CoreArbiterServer::BLOCKED);
-    ASSERT_EQ(thread2->state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+    ASSERT_EQ(thread2->state, CoreArbiterServer::RUNNING_MANAGED);
     ASSERT_EQ(process->coreReleaseCount, 1u);
     ASSERT_EQ(process->stats->numOwnedCores, 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
 
     ProcessStats processStats;
     ProcessInfo* process = createProcess(server, 1, &processStats);
@@ -355,13 +355,13 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, false);
     std::vector<ProcessInfo*> processes;
@@ -379,14 +379,14 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     processes[1]->desiredCorePriorities[7] = 2;
 
     server.distributeCores();
-    ASSERT_TRUE(server.exclusiveThreads.empty());
-    for (CoreInfo* core : server.exclusiveCores) {
-        ASSERT_EQ(core->exclusiveThread, (ThreadInfo*)NULL);
+    ASSERT_TRUE(server.managedThreads.empty());
+    for (CoreInfo* core : server.managedCores) {
+        ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     }
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 
     for (ProcessInfo* process : processes) {
         delete process->stats;
@@ -396,7 +396,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
 
@@ -417,39 +417,39 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
 
     // Cores are shared evenly among nice to have threads of the same priority.
     server.distributeCores();
-    ASSERT_EQ(server.exclusiveThreads.size(), 2u);
+    ASSERT_EQ(server.managedThreads.size(), 2u);
     ASSERT_EQ(processes[0]->stats->numOwnedCores, 1u);
     ASSERT_EQ(processes[1]->stats->numOwnedCores, 1u);
     std::unordered_map<CoreInfo*, ThreadInfo*> savedCoreToThread;
-    for (CoreInfo* core : server.exclusiveCores) {
-        ASSERT_TRUE(core->exclusiveThread != NULL);
-        savedCoreToThread[core] = core->exclusiveThread;
+    for (CoreInfo* core : server.managedCores) {
+        ASSERT_TRUE(core->managedThread != NULL);
+        savedCoreToThread[core] = core->managedThread;
     }
 
-    // Threads already running exclusively are given priority over blocked ones
-    // in core distribution.
+    // Threads already running on a managed core are given priority over blocked
+    // ones in core distribution.
     server.distributeCores();
-    ASSERT_EQ(server.exclusiveThreads.size(), 2u);
+    ASSERT_EQ(server.managedThreads.size(), 2u);
     ASSERT_EQ(processes[0]->stats->numOwnedCores, 1u);
     ASSERT_EQ(processes[1]->stats->numOwnedCores, 1u);
-    for (CoreInfo* core : server.exclusiveCores) {
-        ASSERT_EQ(core->exclusiveThread, savedCoreToThread[core]);
+    for (CoreInfo* core : server.managedCores) {
+        ASSERT_EQ(core->managedThread, savedCoreToThread[core]);
     }
 
     // Don't give processes more cores at this priority than they've asked for
-    ThreadInfo* removedThread = server.exclusiveCores[0]->exclusiveThread;
+    ThreadInfo* removedThread = server.managedCores[0]->managedThread;
     removedThread->process->desiredCorePriorities[7] = 0;
-    server.exclusiveThreads.erase(removedThread);
-    server.exclusiveCores[0]->exclusiveThread = NULL;
+    server.managedThreads.erase(removedThread);
+    server.managedCores[0]->managedThread = NULL;
     server.distributeCores();
     ProcessInfo* otherProcess = removedThread->process == processes[0] ?
         processes[1] : processes[0];
-    ASSERT_EQ(server.exclusiveThreads.size(), 2u);
+    ASSERT_EQ(server.managedThreads.size(), 2u);
     ASSERT_EQ(otherProcess->stats->numOwnedCores, 2u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 
     for (ProcessInfo* process : processes) {
         delete process->stats;
@@ -459,7 +459,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4}, false);
 
@@ -483,7 +483,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
 
     // Higher priorities are assigned before lower priorities
     server.distributeCores();
-    ASSERT_EQ(server.exclusiveThreads.size(), 4u);
+    ASSERT_EQ(server.managedThreads.size(), 4u);
     ASSERT_EQ(highPriorityProcess->stats->numOwnedCores, 3u);
     ASSERT_EQ(lowPriorityProcess->stats->numOwnedCores, 1u);
 
@@ -501,7 +501,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 
     for (ProcessInfo* process : processes) {
         delete process->stats;
@@ -511,7 +511,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
 TEST_F(CoreArbiterServerTest, distributeCores_scaleUnmanagedCore) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
 
@@ -521,143 +521,143 @@ TEST_F(CoreArbiterServerTest, distributeCores_scaleUnmanagedCore) {
     process->desiredCorePriorities[0] = 1;
     server.corePriorityQueues[0].push_back(process);
 
-    ASSERT_EQ(server.exclusiveCores.size(), 0u);
+    ASSERT_EQ(server.managedCores.size(), 0u);
     ASSERT_EQ(server.unmanagedCores.size(), 1u);
 
     // Scale up
     server.distributeCores();
-    ASSERT_EQ(server.exclusiveCores.size(), 1u);
+    ASSERT_EQ(server.managedCores.size(), 1u);
     ASSERT_EQ(server.unmanagedCores.size(), 0u);
 
     // distributeCores() shouldn't cause unmanaged cpuset to scale down
     process->desiredCorePriorities[0] = 0;
     server.corePriorityQueues[0].pop_front();
-    server.exclusiveCores[0]->exclusiveThread = NULL;
+    server.managedCores[0]->managedThread = NULL;
     server.distributeCores();
-    ASSERT_EQ(server.exclusiveCores.size(), 1u);
+    ASSERT_EQ(server.managedCores.size(), 1u);
     ASSERT_EQ(server.unmanagedCores.size(), 0u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, handleEvents_scaleUnmanagedCore) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
 
-    // The server should wake up to move its unused exclusive cores to the
+    // The server should wake up to move its unused managed cores to the
     // unmanaged cpuset
     uint64_t now = Cycles::rdtsc();
     server.unmanagedCpusetLastUpdate = now;
-    server.exclusiveCores[0]->threadRemovalTime = now;
+    server.managedCores[0]->threadRemovalTime = now;
     server.handleEvents();
-    ASSERT_EQ(server.exclusiveCores.size(), 0u);
+    ASSERT_EQ(server.managedCores.size(), 0u);
     ASSERT_EQ(server.unmanagedCores.size(), 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
     server.preemptionTimeout = 1; // For faster testing
 
     ProcessStats processStats;
-    CoreInfo* core = server.exclusiveCores[0];
+    CoreInfo* core = server.managedCores[0];
 
     ProcessInfo* process = createProcess(server, 1, &processStats);
     ThreadInfo* thread = createThread(
-        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, core);
+        server, 1, process, 1, CoreArbiterServer::RUNNING_MANAGED, core);
 
     // If the client is cooperative, nothing should happen
     process->coreReleaseCount = 1;
     server.requestCoreRelease(core);
     server.handleEvents();
-    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);
 
     // If client is uncooperative, the thread should be removed from its core
     process->coreReleaseCount = 0;
     server.requestCoreRelease(core);
     server.handleEvents();
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_PREEMPTED);
-    ASSERT_EQ(core->exclusiveThread, (ThreadInfo*)NULL);
+    ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     ASSERT_EQ(process->stats->numOwnedCores, 0u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_invalidateOldTimeout) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
 
     ProcessStats processStats;
-    CoreInfo* core = server.exclusiveCores[0];
+    CoreInfo* core = server.managedCores[0];
 
     ProcessInfo* process = createProcess(server, 1, &processStats);
     ThreadInfo* thread = createThread(
-        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, core);
+        server, 1, process, 1, CoreArbiterServer::RUNNING_MANAGED, core);
 
     // Simulate a timer going off for a process who previously released a core
     process->coreReleaseCount = 1;
     server.timerFdToInfo[1] = {1, 1};
     server.timeoutThreadPreemption(1);
 
-    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_EXCLUSIVE);
+    ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, cleanupConnection) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
     // Prevent close calls since we're not using real sockets
     sys->closeErrno = 1;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresExclusive(server);
+    makeUnmanagedCoresManaged(server);
 
-    // Set up a process with three threads: one exclusive, one preempted, and
+    // Set up a process with three threads: one managed, one preempted, and
     // one blocked
     ProcessStats processStats;
     processStats.coreReleaseRequestCount = 2;
     processStats.preemptedCount = 1;
-    CoreInfo* core = server.exclusiveCores[0];
+    CoreInfo* core = server.managedCores[0];
     ProcessInfo* process = createProcess(server, 1, &processStats);
-    ThreadInfo* exclusiveThread = createThread(
-        server, 1, process, 1, CoreArbiterServer::RUNNING_EXCLUSIVE, core);
+    ThreadInfo* managedThread = createThread(
+        server, 1, process, 1, CoreArbiterServer::RUNNING_MANAGED, core);
     ThreadInfo* preemptedThread = createThread(
         server, 2, process, 2, CoreArbiterServer::RUNNING_PREEMPTED);
     ThreadInfo* blockedThread = createThread(
         server, 3, process, 3, CoreArbiterServer::BLOCKED);
 
-    server.cleanupConnection(exclusiveThread->socket);
-    ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_EXCLUSIVE]
+    server.cleanupConnection(managedThread->socket);
+    ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_MANAGED]
                          .empty());
     ASSERT_EQ(server.threadSocketToInfo.find(1),
               server.threadSocketToInfo.end());
-    ASSERT_EQ(server.exclusiveThreads.find(exclusiveThread),
-              server.exclusiveThreads.end());
-    ASSERT_EQ(core->exclusiveThread, (ThreadInfo*)NULL);
+    ASSERT_EQ(server.managedThreads.find(managedThread),
+              server.managedThreads.end());
+    ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     ASSERT_EQ(process->stats->numOwnedCores, 0u);
     ASSERT_EQ(process->coreReleaseCount, 1u);
     ASSERT_EQ(process->stats->unpreemptedCount, 0u);
@@ -680,7 +680,7 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
-    CoreArbiterServer::testingDoNotChangeExclusiveCores = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
     sys->closeErrno = 0;
 }
 }

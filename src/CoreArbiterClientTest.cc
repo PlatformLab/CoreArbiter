@@ -72,34 +72,34 @@ class CoreArbiterClientTest : public ::testing::Test {
     }
 };
 
-TEST_F(CoreArbiterClientTest, setNumCores_invalidRequest) {
+TEST_F(CoreArbiterClientTest, setRequestedCores_invalidRequest) {
     CoreArbiterClient::testingSkipConnectionSetup = true;
     disconnectClient();
 
     // Core request vector too small
-    ASSERT_THROW(client.setNumCores({0}),
+    ASSERT_THROW(client.setRequestedCores({0}),
                  CoreArbiterClient::ClientException);
 
     // Core request vector too large
-    ASSERT_THROW(client.setNumCores({0,0,0,0,0,0,0,0,0}),
+    ASSERT_THROW(client.setRequestedCores({0,0,0,0,0,0,0,0,0}),
                  CoreArbiterClient::ClientException);
 }
 
-TEST_F(CoreArbiterClientTest, setNumCores_establishConnection) {
+TEST_F(CoreArbiterClientTest, setRequestedCores_establishConnection) {
     CoreArbiterClient::testingSkipConnectionSetup = true;
     disconnectClient();
 
     ASSERT_EQ(client.serverSocket, -1);
     // This isn't going to work because the client's socket is set to an
     // invalid file descriptor for testing
-    ASSERT_THROW(client.setNumCores({0,0,0,0,0,0,0,0}),
+    ASSERT_THROW(client.setRequestedCores({0,0,0,0,0,0,0,0}),
                  CoreArbiterClient::ClientException);
     ASSERT_EQ(client.serverSocket, 999);
 }
 
-TEST_F(CoreArbiterClientTest, setNumCores) {
+TEST_F(CoreArbiterClientTest, setRequestedCores) {
     connectClient();
-    client.setNumCores({0, 1, 2, 3, 4, 5, 6, 7});
+    client.setRequestedCores({0, 1, 2, 3, 4, 5, 6, 7});
     client.serverSocket = -1;
 
     uint8_t msgType;

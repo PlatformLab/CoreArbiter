@@ -29,9 +29,9 @@ using namespace CoreArbiter;
   * itself again when the number of cores is decreased.
   */
 void coreExec(CoreArbiterClient& client) {
-    client.setNumCores({1,0,0,0,0,0,0,0});
+    client.setRequestedCores({1,0,0,0,0,0,0,0});
     client.blockUntilCoreAvailable();
-    client.setNumCores({0,0,0,0,0,0,0,0});
+    client.setRequestedCores({0,0,0,0,0,0,0,0});
     while (!client.mustReleaseCore());
     client.unregisterThread();
 }

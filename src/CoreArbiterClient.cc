@@ -38,12 +38,14 @@ bool CoreArbiterClient::testingSkipConnectionSetup = false;
  * Private constructor because CoreArbiterClient is a singleton class. The
  * constructor itself doesn't do anything except establish the path to the
  * server. A connection with the server is established the first time a thread
- * needs to communicate with it (i.e., calls setNumCores or shouldReleaseCore).
+ * needs to communicate with it (i.e., calls setRequestedCores or
+ * shouldReleaseCore).
  *
  * The server is expected to be running before the client is initialized.
  *
  * \param serverSocketPath
- *     The path to the socket that the server is listening for connections on.
+ *     The path to the socket that the server is listening
+ *     for connections on.
  */
 CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
     : mutex()
@@ -73,8 +75,8 @@ CoreArbiterClient::~CoreArbiterClient()
  * 0-indexed priorities), it should send:
  *     0 2 1 0 0 0 0 0
  * Lower indexes have higher priority. Priorities are on a per-process basis.
- * One thread calling setNumCores will changed the desired number of cores for
- * all threads in its process.
+ * One thread calling setRequestedCores will changed the desired number of
+ * cores for all threads in its process.
  *
  * This request for cores is handled asynchronously by the server. See
  * blockUntilCoreAvailable() and getnumOwnedCores() for how to actually place
@@ -88,7 +90,7 @@ CoreArbiterClient::~CoreArbiterClient()
  *     higher priority.
  */
 void
-CoreArbiterClient::setNumCores(std::vector<uint32_t> numCores)
+CoreArbiterClient::setRequestedCores(std::vector<uint32_t> numCores)
 {
     if (numCores.size() != NUM_PRIORITIES) {
         std::string err = "Core request must have " +
@@ -120,9 +122,10 @@ CoreArbiterClient::setNumCores(std::vector<uint32_t> numCores)
  * Returns true if the server has requested that this client release a core. It
  * will only return true once per core that should be released. The caller is
  * obligated to ensure that some thread on an exclusive core calls
- * blockUntilCoreAvailable() if this method returns true. This method should be
- * called periodically, as the server will move an uncooperative process's
- * threads to an unmanaged core after RELEASE_TIMEOUT_MS milliseconds.
+ * blockUntilCoreAvailable() for every time this method returns true. This
+ * method should be called periodically, as the server will move an
+ * uncooperative process's threads to an unmanaged core after RELEASE_TIMEOUT_MS
+ * milliseconds.
  */
 bool
 CoreArbiterClient::mustReleaseCore()
@@ -155,7 +158,8 @@ CoreArbiterClient::mustReleaseCore()
 
 /**
  * Returns true if this process has a thread that was previously running
- * exclusively but was moved to the unmanaged core.
+ * on a managed core but was moved to the unmanaged core. This happens when
+ * a preempted thread does not release its core soon enough.
  */
 bool
 CoreArbiterClient::threadPreempted()
@@ -165,14 +169,18 @@ CoreArbiterClient::threadPreempted()
 
 /**
  * This method should be called by a thread that wants to run exclusively on a
- * core. It blocks the thread and does not return until it has been placed on a
- * core. In general it is safe to call blockUntilCoreAvailable() before
- * setNumCores(), but if a process calls blockUntilCoreAvailable() on all of its
- * threads it cannot get any work done, including calling setNumCores(). At most
- * the number of threads specified by setNumCores() will be woken up from a call
- * to blockUntilCoreAvailable().
+ * managed core. It blocks the thread and does not return until it has been
+ * placed on a core. In general it is safe to call blockUntilCoreAvailable()
+ * before setRequestedCores(), but if a process calls blockUntilCoreAvailable()
+ * on all of its threads it cannot get any work done, including calling
+ * setRequestedCores(). At most the number of threads specified by
+ * setRequestedCores() will be woken up from a call to
+ * blockUntilCoreAvailable().
  *
  * Throws a ClientException on error.
+ *
+ * \return
+ *     The core ID of the core that this thread has woken up on.
  */
 core_t
 CoreArbiterClient::blockUntilCoreAvailable()
@@ -224,7 +232,7 @@ CoreArbiterClient::blockUntilCoreAvailable()
 }
 
 /**
- * Tells the server that this thread no longer wishes to run on exclusive cores.
+ * Tells the server that this thread no longer wishes to run on managed cores.
  * This should always be called before a thread exits to ensure that the server
  * doesn't keep stale threads on cores.
  */
@@ -246,9 +254,11 @@ CoreArbiterClient::unregisterThread()
     }
 }
 
+// -- methods for testing
+
 /**
- * Returns the number of threads this process owns that are running exclusively
- * on a core, from the server's perspective.
+ * Returns the number of threads this process owns that are running on a managed
+ * core, from the server's perspective.
  */
 uint32_t
 CoreArbiterClient::getNumOwnedCoresFromServer()
@@ -261,8 +271,8 @@ CoreArbiterClient::getNumOwnedCoresFromServer()
 }
 
 /**
- * Returns the number of threads this process owns that are running exclusively
- * on a core, from the client's perspective.
+ * Returns the number of threads this process owns that are running on a managed
+ * core, from the client's perspective.
  */
 uint32_t
 CoreArbiterClient::getNumOwnedCores()
@@ -295,8 +305,8 @@ CoreArbiterClient::getNumBlockedThreads()
 }
 
 /**
- * Returns the number of cores under the server's control that do not currently
- * have a thread running exclusively.
+ * Returns the number of available cores under the server's control that do not
+ * currently have a thread running exclusively.
  */
 size_t
 CoreArbiterClient::getNumUnoccupiedCores()
@@ -386,6 +396,16 @@ CoreArbiterClient::createNewServerConnection()
         processId, threadId);
 }
 
+/**
+ * Opens a shared memory page at a path provided by the server and sets the
+ * provided pointer to point to the mmapped data. This should be called after
+ * the server has been informed that it has a new process connecting.
+ *
+ * \param bufPtr
+ *     Double pointer to the location of the shared memory structure
+ * \return
+ *     The fild descriptor of the opened shared memory file
+ */
 int CoreArbiterClient::openSharedMemory(void** bufPtr) {
     // Read the shared memory path length from the server
     size_t pathLen;
