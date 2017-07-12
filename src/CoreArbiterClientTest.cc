@@ -180,4 +180,4 @@ TEST_F(CoreArbiterClientTest, getNumOwnedCores) {
     EXPECT_EQ(client.getNumOwnedCores(), 99u);
 }
 
-}
+} // namespace CoreArbiter

@@ -16,14 +16,15 @@
 #ifndef CORE_ARBITER_SERVER_H_
 #define CORE_ARBITER_SERVER_H_
 
+#include <sys/types.h>
+#include <sys/epoll.h>
+#include <sys/stat.h>
+
 #include <atomic>
 #include <deque>
 #include <fstream>
-#include <sys/types.h>
 #include <unordered_map>
 #include <unordered_set>
-#include <sys/epoll.h>
-#include <sys/stat.h>
 #include <stdexcept>
 #include <vector>
 
@@ -55,8 +56,8 @@ class CoreArbiterServer {
   public:
     CoreArbiterServer(std::string socketPath,
                       std::string sharedMemPathPrefix,
-                      std::vector<core_t> managedCores={},
-                      bool arbitrateImmediately=true);
+                      std::vector<core_t> managedCores = {},
+                      bool arbitrateImmediately = true);
     ~CoreArbiterServer();
     void startArbitration();
     void endArbitration();
@@ -246,7 +247,7 @@ class CoreArbiterServer {
     bool moveThreadToManagedCore(struct ThreadInfo* thread,
                                  struct CoreInfo* core);
     void removeThreadFromManagedCore(struct ThreadInfo* thread,
-                                     bool changeCpuset=true);
+                                     bool changeCpuset = true);
     void updateUnmanagedCpuset();
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
@@ -351,7 +352,7 @@ class CoreArbiterServer {
     static bool testingDoNotChangeManagedCores;
 };
 
-}
+} // namespace CoreArbiter
 
 int ensureParents(const char *path, mode_t mode = S_IRWXU);
 

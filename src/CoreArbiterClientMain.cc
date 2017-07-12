@@ -20,7 +20,8 @@
 #include "CoreArbiterClient.h"
 #include "Logger.h"
 
-using namespace CoreArbiter;
+using CoreArbiter::CoreArbiterClient;
+using CoreArbiter::Logger;
 
 #define NUM_TRIALS 100
 
@@ -37,7 +38,7 @@ void coreExec(CoreArbiterClient& client) {
 }
 
 int main(){
-    Logger::setLogLevel(DEBUG);
+    Logger::setLogLevel(CoreArbiter::DEBUG);
     CoreArbiterClient& client =
         CoreArbiterClient::getInstance("/tmp/CoreArbiter/testsocket");
     std::thread coreThread(coreExec, std::ref(client));

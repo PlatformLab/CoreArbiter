@@ -16,12 +16,12 @@
 #ifndef CORE_ARBITER_CLIENT_H_
 #define CORE_ARBITER_CLIENT_H_
 
-#include <atomic>
+#include <string.h>
 #include <sys/types.h>
+#include <atomic>
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
-#include <string.h>
 #include <vector>
 
 #include "CoreArbiterCommon.h"
@@ -69,12 +69,12 @@ class CoreArbiterClient {
 
     class ClientException: public std::runtime_error {
       public:
-        ClientException(std::string err) : runtime_error(err) {}
+        explicit ClientException(std::string err) : runtime_error(err) {}
     };
 
   private:
     // Constructor is private because CoreArbiterClient is a singleton
-    CoreArbiterClient(std::string serverSocketPath);
+    explicit CoreArbiterClient(std::string serverSocketPath);
 
     void createNewServerConnection();
     int openSharedMemory(void** bufPtr);
@@ -149,6 +149,6 @@ class CoreArbiterClient {
     static bool testingSkipConnectionSetup;
 };
 
-}
+} // namespace CoreArbiter
 
 #endif // CORE_ARBITER_CLIENT_H_

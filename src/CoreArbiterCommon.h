@@ -16,9 +16,9 @@
 #ifndef CORE_ARBITER_COMMON_H
 #define CORE_ARBITER_COMMON_H
 
+#include <stdint.h>
 #include <atomic>
 #include <cstddef>
-#include <stdint.h>
 
 #define NUM_PRIORITIES 8
 #define RELEASE_TIMEOUT_MS 10
@@ -89,6 +89,6 @@ struct GlobalStats {
     {}
 };
 
-}
+} // namespace CoreArbiter
 
 #endif // CORE_ARBITER_COMMON_H

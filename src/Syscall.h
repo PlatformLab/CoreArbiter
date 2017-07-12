@@ -24,12 +24,12 @@
 #include <netinet/in.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
-#include <cstdio>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/timerfd.h>
 
+#include <cstdio>
 #include "CoreArbiterCommon.h"
 
 namespace CoreArbiter {

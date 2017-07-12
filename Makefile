@@ -16,6 +16,11 @@ PERFUTILS=../PerfUtils
 INCLUDE=-I$(PERFUTILS)/include
 LIBS=$(PERFUTILS)/lib/libPerfUtils.a -pthread
 
+# Stuff needed for make check
+TOP := $(shell echo $${PWD-`pwd`})
+ifndef CHECK_TARGET
+CHECK_TARGET=$$(find $(SRC_DIR) '(' -name '*.h' -or -name '*.cc' ')' -not -path '$(TOP)/googletest/*' )
+endif
 
 OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o
 
@@ -51,6 +56,10 @@ $(OBJECT_DIR)/%.o: $(SRC_DIR)/%.cc $(HEADERS) | $(OBJECT_DIR)
 
 $(OBJECT_DIR):
 	mkdir -p $(OBJECT_DIR)
+
+check:
+	scripts/cpplint.py --filter=-runtime/threadsafe_fn,-readability/streams,-whitespace/blank_line,-whitespace/braces,-whitespace/comments,-runtime/arrays,-build/include_what_you_use,-whitespace/semicolon $(CHECK_TARGET)
+	! grep '.\{81\}' $(SRC_DIR)/*.h $(SRC_DIR)/*.cc
 
 ################################################################################
 # Test Targets

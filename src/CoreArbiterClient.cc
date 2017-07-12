@@ -388,8 +388,10 @@ CoreArbiterClient::createNewServerConnection()
     if (!processStats) {
         // This is the first time this process is registering so we need to
         // set up the shared memory pages
-        globalSharedMemFd = openSharedMemory((void**)&globalStats);
-        processSharedMemFd = openSharedMemory((void**)&processStats);
+        globalSharedMemFd =
+            openSharedMemory(reinterpret_cast<void**>(&globalStats));
+        processSharedMemFd =
+            openSharedMemory(reinterpret_cast<void**>(&processStats));
     }
 
     LOG(NOTICE, "Successfully registered process %d, thread %d with server.\n",
@@ -491,4 +493,4 @@ void CoreArbiterClient::sendData(int socket, void* buf, size_t numBytes,
     }
 }
 
-}
+} // namespace CoreArbiter

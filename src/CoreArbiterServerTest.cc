@@ -74,7 +74,7 @@ class CoreArbiterServerTest : public ::testing::Test {
      */
     ThreadInfo* createThread(CoreArbiterServer& server, pid_t threadId,
                              ProcessInfo* process, int socket,
-                             ThreadState state, CoreInfo* core=NULL) {
+                             ThreadState state, CoreInfo* core = NULL) {
         ThreadInfo* thread = new ThreadInfo(threadId, process, socket);
         thread->state = state;
         process->threadStateToSet[state].insert(thread);
@@ -683,4 +683,4 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
     sys->closeErrno = 0;
 }
-}
+} // namespace CoreArbiter

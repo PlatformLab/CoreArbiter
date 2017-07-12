@@ -227,7 +227,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         exit(-1);
     }
 
-    if (sys->listen(listenSocket, 100) < 0) { // TODO: backlog size?
+    if (sys->listen(listenSocket, 100) < 0) { // TODO(jspeiser): backlog size?
         LOG(ERROR, "Error listening: %s\n", strerror(errno));
         sys->close(listenSocket);
         if (remove(socketPath.c_str()) != 0) {
@@ -378,7 +378,7 @@ bool CoreArbiterServer::handleEvents()
     uint64_t nextCpusetUpdate = msSinceLastCpusetUpdate >= cpusetUpdateTimeout ?
         0 : cpusetUpdateTimeout - msSinceLastCpusetUpdate;
     int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS,
-                                 (int)nextCpusetUpdate);
+                                 static_cast<int>(nextCpusetUpdate));
     if (numFds < 0) {
         // Interrupted system calls are normal, so there is no need to log them
         // as errors.
@@ -411,8 +411,7 @@ bool CoreArbiterServer::handleEvents()
             sys->close(socket);
         } else if (socket == terminationFd) {
             return false;
-        }
-        else {
+        } else {
             // Thread is making some sort of request
             if (!(events[i].events & EPOLLIN)) {
                 LOG(WARNING, "Did not receive a message type.\n");
@@ -425,7 +424,7 @@ bool CoreArbiterServer::handleEvents()
                 continue;
             }
 
-            switch(msgType) {
+            switch (msgType) {
                 case THREAD_BLOCK:
                     threadBlocking(socket);
                     break;
@@ -546,7 +545,7 @@ CoreArbiterServer::acceptConnection(int listenSocket)
                                             processSharedMemFd, 0);
         if (processStats == MAP_FAILED) {
             LOG(ERROR, "Error on mmap: %s\n", strerror(errno));
-            // TODO: send error to client
+            // TODO(jspeiser): send error to client
             return;
         }
 
@@ -692,7 +691,7 @@ CoreArbiterServer::coresRequested(int socket)
 {
     // TimeTrace::record("SERVER: Starting to serve core request");
 
-    // TODO: maybe combine this and the original read into one read
+    // TODO(jspeiser): maybe combine this and the original read into one read
     uint32_t numCoresArr[NUM_PRIORITIES];
     if (!readData(socket, &numCoresArr, sizeof(uint32_t) * NUM_PRIORITIES,
                  "Error receiving number of cores requested")) {
@@ -1006,7 +1005,8 @@ CoreArbiterServer::distributeCores()
     }
 
 
-    // TimeTrace::record("SERVER: Finished deciding which threads to put on cores");
+    // TimeTrace::record("SERVER: Finished deciding which threads to put on
+    // cores");
 
     // Add threads back to the correct sets in their process
     for (struct ThreadInfo* thread : threadsToReceiveCores) {
@@ -1110,8 +1110,8 @@ CoreArbiterServer::distributeCores()
 void
 CoreArbiterServer::requestCoreRelease(struct CoreInfo* core)
 {
-    // TODO: Setting up this timer takes ~3us. Could be optimized by keeping
-    // a single timer for everything.
+    // TODO(jspeiser): Setting up this timer takes ~3us. Could be optimized by
+    // keeping a single timer for everything.
 
     if (!core->managedThread) {
         LOG(WARNING, "There is no thread on core %d to preempt\n", core->id);
@@ -1498,7 +1498,7 @@ void CoreArbiterServer::updateUnmanagedCpuset() {
 
     if (unmanagedCpusetCpus.bad()) {
         LOG(ERROR, "Error changing unmanaged cpuset cpus\n");
-        exit(-1); // TODO: handle elegantly
+        exit(-1); // TODO(jspeiser): handle elegantly
     }
 }
 
@@ -1572,4 +1572,4 @@ CoreArbiterServer::installSignalHandler() {
         LOG(ERROR, "Couldn't set signal handler for SIGABRT");
 }
 
-}
+} // namespace CoreArbiter

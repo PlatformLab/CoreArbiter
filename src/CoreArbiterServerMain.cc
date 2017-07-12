@@ -18,7 +18,8 @@
 #include "Logger.h"
 #include "PerfUtils/Util.h"
 
-using namespace CoreArbiter;
+using CoreArbiter::CoreArbiterServer;
+using CoreArbiter::Logger;
 
 std::string socketPath = "/tmp/CoreArbiter/testsocket";
 std::string sharedMemoryPath = "/tmp/CoreArbiter/testmem";
@@ -65,7 +66,7 @@ parseOptions(int* argcp, const char** argv) {
                         optionName, strlen(candidateName)) == 0) {
                 if (needsArg) {
                     if (i + 1 >= argc) {
-                        LOG(ERROR,
+                        LOG(CoreArbiter::ERROR,
                                 "Missing argument to option %s!\n",
                                 candidateName);
                         break;
@@ -96,7 +97,8 @@ parseOptions(int* argcp, const char** argv) {
                     coresUsed = PerfUtils::Util::parseRanges(optionArgument);
                 break;
             case UNRECOGNIZED:
-                LOG(ERROR, "Unrecognized option %s given.", optionName);
+                LOG(CoreArbiter::ERROR, "Unrecognized option %s given.",
+                        optionName);
                 abort();
         }
     }
@@ -104,14 +106,14 @@ parseOptions(int* argcp, const char** argv) {
 }
 
 int main(int argc, const char** argv) {
-	Logger::setLogLevel(ERROR);
+    Logger::setLogLevel(CoreArbiter::ERROR);
     parseOptions(&argc, argv);
     printf("socketPath:       %s\n", socketPath.c_str());
     printf("sharedMemoryPath: %s\n", sharedMemoryPath.c_str());
     printf("coresUsed:       ");
-    if (coresUsed.empty())
+    if (coresUsed.empty()) {
         printf(" ALL\n");
-    else {
+    } else {
         for (size_t i = 0; i < coresUsed.size(); i++)
             printf(" %d", coresUsed[i]);
         putchar('\n');

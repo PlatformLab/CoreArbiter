@@ -16,9 +16,9 @@
 #ifndef CORE_ARBITER_LOGGER_H
 #define CORE_ARBITER_LOGGER_H
 
-#include <mutex>
 #include <stdarg.h>
 #include <stdint.h>
+#include <mutex>
 
 #define LOG Logger::log
 
@@ -49,7 +49,7 @@ class Logger {
      *     A format string, followed by its arguments.
      */
     static void log(LogLevel level, const char* fmt, ...)
-        __attribute__((format (printf, 2, 3)));
+        __attribute__((format(printf, 2, 3)));
 
   private:
     // The minimum severity level to print.
@@ -60,6 +60,6 @@ class Logger {
     static std::mutex mutex;
 };
 
-}
+} //namespace CoreArbiter
 
 #endif

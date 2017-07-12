@@ -34,7 +34,7 @@ namespace CoreArbiter {
  * do various things such as call the normal system call or return an error.
  */
 class MockSyscall : public Syscall {
-    public:
+  public:
     MockSyscall() : acceptErrno(0), bindErrno(0), chmodErrno(0), closeErrno(0),
                     closeCount(0), closedirErrno(0), connectErrno(0),
                     epollCreateErrno(0), epollCtlErrno(0), epollWaitCount(-1),
@@ -442,6 +442,6 @@ class MockSyscall : public Syscall {
     }
 };
 
-}  // namespace RAMCloud
+} // namespace CoreArbiter
 
 #endif  // CORE_ARBITER_MOCK_SYSCALL
