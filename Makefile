@@ -77,6 +77,6 @@ $(OBJECT_DIR)/libgtest.a:
 ################################################################################
 
 clean:
-	rm -rf obj bin lib
+	rm -rf $(OBJECT_DIR) $(BIN_DIR) $(INCLUDE_DIR) $(LIB_DIR)
 
 .PHONY: install clean
