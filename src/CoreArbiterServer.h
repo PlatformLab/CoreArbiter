@@ -110,7 +110,7 @@ class CoreArbiterServer {
             if (!testingSkipCpusetAllocation) {
                 cpusetFile.open(cpusetFilename);
                 if (!cpusetFile.is_open()) {
-                    LOG(ERROR, "Unable to open %s\n", cpusetFilename.c_str());
+                    LOG(ERROR, "Unable to open %s", cpusetFilename.c_str());
                     exit(-1);
                 }
             }

@@ -61,9 +61,9 @@ void Logger::log(const CodeLocation& where, LogLevel level,
 
     Lock lock(mutex);
     if (level == ERROR) {
-        fprintf(stderr, "%s", buffer);
+        fprintf(stderr, "%s\n", buffer);
     } else {
-        printf("%s", buffer);
+        printf("%s\n", buffer);
     }
 }
 
