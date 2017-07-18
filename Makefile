@@ -14,7 +14,7 @@ BIN_DIR = bin
 # Depenencies
 PERFUTILS=../PerfUtils
 INCLUDE=-I$(PERFUTILS)/include
-LIBS=$(PERFUTILS)/lib/libPerfUtils.a -pthread
+LIBS=$(PERFUTILS)/lib/libPerfUtils.a -lpcrecpp -pthread
 
 # Stuff needed for make check
 TOP := $(shell echo $${PWD-`pwd`})
@@ -22,7 +22,7 @@ ifndef CHECK_TARGET
 CHECK_TARGET=$$(find $(SRC_DIR) '(' -name '*.h' -or -name '*.cc' ')' -not -path '$(TOP)/googletest/*' )
 endif
 
-OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o
+OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o CodeLocation.o
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')

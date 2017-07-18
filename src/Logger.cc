@@ -14,27 +14,57 @@
  */
 
 #include "Logger.h"
+#include "PerfUtils/Cycles.h"
 
 namespace CoreArbiter {
+
+using PerfUtils::Cycles;
 
 LogLevel Logger::displayMinLevel = NOTICE;
 std::mutex Logger::mutex;
 
-void Logger::log(LogLevel level, const char* fmt, ...)
+/**
+ * Friendly names for each #LogLevel value.
+ * Keep this in sync with the LogLevel enum.
+ */
+static const char* logLevelNames[] = {"DEBUG", "NOTICE", "WARNING",
+    "ERROR", "SILENT"};
+
+void Logger::log(const CodeLocation& where, LogLevel level,
+        const char* fmt, ...)
 {
     if (level < displayMinLevel) {
         return;
     }
 
-    Lock lock(mutex);
+#define MAX_MESSAGE_CHARS 2000
+    // Construct a message on the stack and then print it out with the lock
+    char buffer[MAX_MESSAGE_CHARS];
+    int spaceLeft = MAX_MESSAGE_CHARS;
+    int charsWritten = 0;
+    int actual;
+    uint64_t time = Cycles::rdtsc();
+
+    // Add a header including rdtsc time and location in the file.
+    actual = snprintf(buffer+charsWritten, spaceLeft,
+            "%.10lu %s:%d in %s %s: ",
+            time, where.baseFileName(), where.line,
+            where.function, logLevelNames[level]);
+    charsWritten += actual;
+    spaceLeft -= actual;
+
+    // Add the actual message
     va_list args;
     va_start(args, fmt);
-    if (level == ERROR) {
-        vfprintf(stderr, fmt, args);
-    } else {
-        vprintf(fmt, args);
-    }
+    actual = vsnprintf(buffer + charsWritten, spaceLeft, fmt, args);
     va_end(args);
+
+    Lock lock(mutex);
+    if (level == ERROR) {
+        fprintf(stderr, "%s", buffer);
+    } else {
+        printf("%s", buffer);
+    }
 }
 
 } // namespace CoreArbiter

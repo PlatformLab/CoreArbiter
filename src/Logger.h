@@ -20,7 +20,11 @@
 #include <stdint.h>
 #include <mutex>
 
-#define LOG Logger::log
+#include "CodeLocation.h"
+
+#define LOG(level, format, ...)  do { \
+    Logger::log(HERE, level, format, ##__VA_ARGS__); \
+} while (0)
 
 namespace CoreArbiter {
 
@@ -48,8 +52,9 @@ class Logger {
      * \param fmt
      *     A format string, followed by its arguments.
      */
-    static void log(LogLevel level, const char* fmt, ...)
-        __attribute__((format(printf, 2, 3)));
+    static void log(const CodeLocation& where, LogLevel level,
+            const char* fmt, ...)
+        __attribute__((format(printf, 3, 4)));
 
   private:
     // The minimum severity level to print.
