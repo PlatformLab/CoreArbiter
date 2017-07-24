@@ -259,6 +259,12 @@ CoreArbiterClient::unregisterThread()
     }
 }
 
+core_t
+CoreArbiterClient::getCoreId()
+{
+    return coreId;
+}
+
 // -- methods for testing
 
 /**

@@ -59,6 +59,7 @@ class CoreArbiterClient {
     core_t blockUntilCoreAvailable();
     uint32_t getNumOwnedCores();
     void unregisterThread();
+    core_t getCoreId();
 
     // Meant for testing, not general use
     uint32_t getNumOwnedCoresFromServer();
