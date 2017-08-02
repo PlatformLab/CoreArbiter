@@ -379,6 +379,7 @@ bool CoreArbiterServer::handleEvents()
         0 : cpusetUpdateTimeout - msSinceLastCpusetUpdate;
     int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS,
                                  static_cast<int>(nextCpusetUpdate));
+    LOG(DEBUG, "SERVER: epoll_wait returned with %d file descriptors.", numFds);
     if (numFds < 0) {
         // Interrupted system calls are normal, so there is no need to log them
         // as errors.
