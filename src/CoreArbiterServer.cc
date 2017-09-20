@@ -1274,7 +1274,12 @@ void CoreArbiterServer::createCpuset(std::string dirName, std::string cores,
 void CoreArbiterServer::moveProcsToCpuset(std::string fromPath,
                                           std::string toPath)
 {
+    if (testingSkipCpusetAllocation) {
+        return;
+    }
+
     LOG(DEBUG, "Moving procs in %s to %s", fromPath.c_str(), toPath.c_str());
+
     std::ifstream fromFile(fromPath);
     if (!fromFile.is_open()) {
         LOG(ERROR, "Unable to open %s", fromPath.c_str());
@@ -1319,6 +1324,10 @@ void CoreArbiterServer::moveProcsToCpuset(std::string fromPath,
 void
 CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath)
 {
+    if (testingSkipCpusetAllocation) {
+        return;
+    }
+
     std::string procsDestFilename = cpusetPath + "/cgroup.procs";
     DIR* dir = sys->opendir(arbiterCpusetPath.c_str());
     if (!dir) {
