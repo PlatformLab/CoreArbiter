@@ -22,7 +22,7 @@ ifndef CHECK_TARGET
 CHECK_TARGET=$$(find $(SRC_DIR) '(' -name '*.h' -or -name '*.cc' ')' -not -path '$(TOP)/googletest/*' )
 endif
 
-OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o CodeLocation.o
+OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o CodeLocation.o ArbiterClientShim.o
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')
