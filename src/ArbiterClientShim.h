@@ -44,9 +44,11 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
         inactiveCores.reset();
     }
 
-    static ArbiterClientShim& getInstance() {
-        static ArbiterClientShim instance;
-        return instance;
+    static ArbiterClientShim* getInstance() {
+        if (!pInstance) {
+            pInstance = new ArbiterClientShim();
+        }
+        return pInstance;
     }
 
   private:
@@ -58,6 +60,7 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
      * a createThread() may get wiped out when the nested dispatch call
      * returns.
      */
+    static ArbiterClientShim *pInstance;
     ArbiterClientShim()
         : CoreArbiter::CoreArbiterClient(""),
         inactiveCores(), currentRequestedCores(), currentCores(),

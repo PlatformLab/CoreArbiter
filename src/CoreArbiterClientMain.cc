@@ -29,20 +29,20 @@ using CoreArbiter::Logger;
   * This thread will get unblocked when a core is allocated, and will block
   * itself again when the number of cores is decreased.
   */
-void coreExec(CoreArbiterClient& client) {
-    client.setRequestedCores({1,0,0,0,0,0,0,0});
-    client.blockUntilCoreAvailable();
-    client.setRequestedCores({0,0,0,0,0,0,0,0});
-    while (!client.mustReleaseCore());
-    client.unregisterThread();
+void coreExec(CoreArbiterClient* client) {
+    client->setRequestedCores({1,0,0,0,0,0,0,0});
+    client->blockUntilCoreAvailable();
+    client->setRequestedCores({0,0,0,0,0,0,0,0});
+    while (!client->mustReleaseCore());
+    client->unregisterThread();
 }
 
 int main(){
     Logger::setLogLevel(CoreArbiter::DEBUG);
-    CoreArbiterClient& client =
+    CoreArbiterClient* client =
         CoreArbiterClient::getInstance("/tmp/CoreArbiter/testsocket");
     std::thread coreThread(coreExec, std::ref(client));
 
     coreThread.join();
-    printf("There are %lu cores available\n", client.getNumUnoccupiedCores());
+    printf("There are %lu cores available\n", client->getNumUnoccupiedCores());
 }

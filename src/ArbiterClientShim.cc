@@ -17,6 +17,8 @@
 
 namespace Arachne {
 
+ArbiterClientShim* ArbiterClientShim::pInstance = NULL;
+
 /**
   * Block until setRequestedCores with a higher number causes a notification on
   * this semaphor.

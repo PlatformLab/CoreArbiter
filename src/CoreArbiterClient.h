@@ -44,9 +44,11 @@ namespace CoreArbiter {
 class CoreArbiterClient {
   public:
     // Singleton methods
-    static CoreArbiterClient& getInstance(std::string serverSocketPath) {
-        static CoreArbiterClient instance(serverSocketPath);
-        return instance;
+    static CoreArbiterClient* getInstance(std::string serverSocketPath) {
+        if (!pInstance) {
+            pInstance = new CoreArbiterClient(serverSocketPath);
+        }
+        return pInstance;
     }
     CoreArbiterClient(CoreArbiterClient const&) = delete;
     void operator=(CoreArbiterClient const&) = delete;
@@ -76,6 +78,7 @@ class CoreArbiterClient {
 
   protected:
     // Constructor is protected because CoreArbiterClient is a singleton
+    static CoreArbiterClient *pInstance;
     explicit CoreArbiterClient(std::string serverSocketPath);
 
   private:

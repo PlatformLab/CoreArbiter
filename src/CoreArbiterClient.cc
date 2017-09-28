@@ -39,6 +39,9 @@ Syscall* CoreArbiterClient::sys = &defaultSyscall;
 
 bool CoreArbiterClient::testingSkipConnectionSetup = false;
 
+
+CoreArbiterClient* CoreArbiterClient::pInstance = NULL;
+
 /**
  * Private constructor because CoreArbiterClient is a singleton class. The
  * constructor itself doesn't do anything except establish the path to the
