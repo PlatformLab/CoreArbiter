@@ -53,13 +53,13 @@ class CoreArbiterClient {
 
     ~CoreArbiterClient();
 
-    void setRequestedCores(std::vector<uint32_t> numCores);
-    bool mustReleaseCore();
-    bool threadPreempted();
-    core_t blockUntilCoreAvailable();
-    uint32_t getNumOwnedCores();
-    void unregisterThread();
-    core_t getCoreId();
+    virtual void setRequestedCores(std::vector<uint32_t> numCores);
+    virtual bool mustReleaseCore();
+    virtual bool threadPreempted();
+    virtual core_t blockUntilCoreAvailable();
+    virtual uint32_t getNumOwnedCores();
+    virtual void unregisterThread();
+    virtual core_t getCoreId();
 
     // Meant for testing, not general use
     uint32_t getNumOwnedCoresFromServer();
@@ -67,15 +67,16 @@ class CoreArbiterClient {
     uint32_t getNumBlockedThreads();
     size_t getNumUnoccupiedCores();
     uint32_t getNumProcessesOnServer();
+    virtual void reset() {;} ;
 
     class ClientException: public std::runtime_error {
       public:
         explicit ClientException(std::string err) : runtime_error(err) {}
     };
 
-  private:
+  protected:
     // Constructor is private because CoreArbiterClient is a singleton
-    explicit CoreArbiterClient(std::string serverSocketPath);
+    CoreArbiterClient(std::string serverSocketPath);
 
     void createNewServerConnection();
     int openSharedMemory(void** bufPtr);
