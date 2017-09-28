@@ -14,6 +14,7 @@
  */
 
 #define private public
+#define protected public
 
 #include "gtest/gtest.h"
 #include "MockSyscall.h"
