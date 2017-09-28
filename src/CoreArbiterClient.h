@@ -67,7 +67,7 @@ class CoreArbiterClient {
     uint32_t getNumBlockedThreads();
     size_t getNumUnoccupiedCores();
     uint32_t getNumProcessesOnServer();
-    virtual void reset() {;} ;
+    virtual void reset() {} ;
 
     class ClientException: public std::runtime_error {
       public:
@@ -75,9 +75,10 @@ class CoreArbiterClient {
     };
 
   protected:
-    // Constructor is private because CoreArbiterClient is a singleton
-    CoreArbiterClient(std::string serverSocketPath);
+    // Constructor is protected because CoreArbiterClient is a singleton
+    explicit CoreArbiterClient(std::string serverSocketPath);
 
+  private:
     void createNewServerConnection();
     int openSharedMemory(void** bufPtr);
     void registerThread();
