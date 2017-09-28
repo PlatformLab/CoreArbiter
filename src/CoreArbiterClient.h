@@ -44,22 +44,22 @@ namespace CoreArbiter {
 class CoreArbiterClient {
   public:
     // Singleton methods
-    static CoreArbiterClient& getInstance(std::string serverSocketPath) {
+    static CoreArbiterClient* getInstance(std::string serverSocketPath) {
         static CoreArbiterClient instance(serverSocketPath);
-        return instance;
+        return &instance;
     }
     CoreArbiterClient(CoreArbiterClient const&) = delete;
     void operator=(CoreArbiterClient const&) = delete;
 
     ~CoreArbiterClient();
 
-    void setRequestedCores(std::vector<uint32_t> numCores);
-    bool mustReleaseCore();
-    bool threadPreempted();
-    core_t blockUntilCoreAvailable();
-    uint32_t getNumOwnedCores();
-    void unregisterThread();
-    core_t getCoreId();
+    virtual void setRequestedCores(std::vector<uint32_t> numCores);
+    virtual bool mustReleaseCore();
+    virtual bool threadPreempted();
+    virtual int blockUntilCoreAvailable();
+    virtual uint32_t getNumOwnedCores();
+    virtual void unregisterThread();
+    virtual int getCoreId();
 
     // Meant for testing, not general use
     uint32_t getNumOwnedCoresFromServer();
@@ -67,16 +67,18 @@ class CoreArbiterClient {
     uint32_t getNumBlockedThreads();
     size_t getNumUnoccupiedCores();
     uint32_t getNumProcessesOnServer();
+    virtual void reset() {} ;
 
     class ClientException: public std::runtime_error {
       public:
         explicit ClientException(std::string err) : runtime_error(err) {}
     };
 
-  private:
-    // Constructor is private because CoreArbiterClient is a singleton
+  protected:
+    // Constructor is protected because CoreArbiterClient is a singleton
     explicit CoreArbiterClient(std::string serverSocketPath);
 
+  private:
     void createNewServerConnection();
     int openSharedMemory(void** bufPtr);
     void registerThread();
@@ -141,7 +143,7 @@ class CoreArbiterClient {
     // indicates that the server has not assigned a core to this thread. Every
     // thread has its own coreId. This ID is NOT accurate for threads that have
     // been preempted from their managed core.
-    static thread_local core_t coreId;
+    static thread_local int coreId;
 
     // Used for all syscalls for easier unit testing.
     static Syscall* sys;

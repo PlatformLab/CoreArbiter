@@ -56,7 +56,7 @@ class CoreArbiterServer {
   public:
     CoreArbiterServer(std::string socketPath,
                       std::string sharedMemPathPrefix,
-                      std::vector<core_t> managedCores = {},
+                      std::vector<int> managedCores = {},
                       bool arbitrateImmediately = true);
     ~CoreArbiterServer();
     void startArbitration();
@@ -80,7 +80,7 @@ class CoreArbiterServer {
     struct CoreInfo {
         // The ID of this core. This ID matches what would be returned by a
         // thread on this core that ran sched_getcpu().
-        core_t id;
+        int id;
 
         // A pointer to the thread running on this core if the core is managed.
         // NULL otherwise.
@@ -101,7 +101,7 @@ class CoreArbiterServer {
             : managedThread(NULL)
         {}
 
-        CoreInfo(core_t id, std::string managedTasksPath)
+        CoreInfo(int id, std::string managedTasksPath)
             : id(id)
             , managedThread(NULL)
             , cpusetFilename(managedTasksPath)
