@@ -19,6 +19,7 @@
 #include "gtest/gtest.h"
 #include "MockSyscall.h"
 #include "CoreArbiterClient.h"
+#include "ArbiterClientShim.h"
 #include "Logger.h"
 
 namespace CoreArbiter {
@@ -35,6 +36,7 @@ class CoreArbiterClientTest : public ::testing::Test {
     GlobalStats globalStats;
 
     CoreArbiterClient client;
+    Arachne::ArbiterClientShim shim_client;
 
     CoreArbiterClientTest()
         : socketPath("/tmp/CoreArbiter/testsocket")
@@ -179,6 +181,20 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 TEST_F(CoreArbiterClientTest, getNumOwnedCores) {
     client.numOwnedCores = 99;
     EXPECT_EQ(client.getNumOwnedCores(), 99u);
+}
+
+TEST_F(CoreArbiterClientTest, setRequestedCores_shim) {
+
+    shim_client.setRequestedCores({0, 1, 2, 3, 4, 5, 6, 7});
+    ASSERT_EQ(shim_client.currentRequestedCores, (unsigned) 28);
+
+}
+
+TEST_F(CoreArbiterClientTest, mustReleaseCore_shim) {
+
+    shim_client.currentCores = 26;
+    ASSERT_EQ(shim_client.mustReleaseCore(), true);
+
 }
 
 } // namespace CoreArbiter
