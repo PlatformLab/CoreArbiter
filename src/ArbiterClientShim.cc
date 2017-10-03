@@ -22,7 +22,7 @@ namespace Arachne {
   * this semaphor.
   */
 int ArbiterClientShim::blockUntilCoreAvailable() {
-    inactiveCores.wait();
+    waitingForAvailableCore.wait();
     return sched_getcpu();
 }
 
@@ -56,7 +56,7 @@ void ArbiterClientShim::setRequestedCores(std::vector<uint32_t> numCores) {
     if (currentRequestedCores > currentCores) {
         uint64_t diff = currentRequestedCores - currentCores;
         for (uint64_t i = 0; i < diff; i++)
-            inactiveCores.notify();
+            waitingForAvailableCore.notify();
         currentCores.store(currentRequestedCores);
     }
 }

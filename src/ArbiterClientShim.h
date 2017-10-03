@@ -40,9 +40,12 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
     void reset() {
         currentRequestedCores = 0;
         currentCores = 0;
-        inactiveCores.reset();
+        waitingForAvailableCore.reset();
     }
 
+    /**
+     * Allow access to singleton.  Enforce single instance.
+     **/
     static ArbiterClientShim* getInstance() {
         static ArbiterClientShim instance;
         return &instance;
@@ -50,7 +53,7 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
 
   private:
     /**
-     * Enforce single instance, and initiate shimLock to be non-yielding.
+     * Initiate shimLock to be non-yielding.
      * NB: Since the lock is taken inside the Arachne dispatch() method
      * which may be polling on an unocupied context, it is not safe to for the
      * lock to enter dispatch() again. This is because a wakeup flag set up by
@@ -59,14 +62,14 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
      */
     ArbiterClientShim()
         : CoreArbiter::CoreArbiterClient(""),
-        inactiveCores(), currentRequestedCores(), currentCores(),
+        waitingForAvailableCore(), currentRequestedCores(), currentCores(),
         shimLock() { }
 
     /**
-      * Threads block on this semaphor instead of a socket recv() when the
-      * arbiter is not used.
+      * Threads block on this semaphor while waiting for a core
+      * to become available.
       */
-    ::Semaphore inactiveCores;
+    ::Semaphore waitingForAvailableCore;
 
     /**
       * The current number of cores this application prefers to have.
