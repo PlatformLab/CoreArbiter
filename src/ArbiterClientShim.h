@@ -25,16 +25,15 @@
 
 namespace Arachne {
 
-typedef int core_t;
-
 /**
-  * This class functions as a shim for the CoreArbiter client so that Arachne
-  * can run without the Core Arbiter when the arbiter is deactivated.
+  * This class functions as a shim, or alternative, for the CoreArbiter 
+  * client so that Arachne can run without the Core Arbiter when the 
+  * arbiter is deactivated.
   */
 class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
   public:
 
-    core_t blockUntilCoreAvailable();
+    int blockUntilCoreAvailable();
     bool mustReleaseCore();
     void setRequestedCores(std::vector<uint32_t> numCores);
     void unregisterThread();

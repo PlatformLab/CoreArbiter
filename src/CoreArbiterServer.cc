@@ -75,7 +75,7 @@ bool CoreArbiterServer::testingDoNotChangeManagedCores = false;
  */
 CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
-                                     std::vector<core_t> managedCoreIds,
+                                     std::vector<int> managedCoreIds,
                                      bool arbitrateImmediately)
     : socketPath(socketPath)
     , listenSocket(-1)
@@ -104,7 +104,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             // need to ensure that at least one core remains unmanaged so that
             // the arbiter has something to run on.
             managedCoreIds.clear();
-            for (core_t id = 1; id < (core_t)numCores; id++) {
+            for (int id = 1; id < (int)numCores; id++) {
                 managedCoreIds.push_back(id);
             }
             alwaysUnmanagedString = "0,";
@@ -112,7 +112,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             alwaysUnmanagedString = "";
             std::sort(managedCoreIds.begin(), managedCoreIds.end());
             size_t idx = 0;
-            for (core_t i = 0; i < (core_t)numCores; i++) {
+            for (int i = 0; i < (int)numCores; i++) {
                 if (idx < managedCoreIds.size() &&
                         managedCoreIds[idx] == i) {
                     idx++;
@@ -135,7 +135,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         createCpuset(arbiterCpusetPath, allCores, "0");
 
         // Set up managed cores
-        for (core_t core : managedCoreIds) {
+        for (int core : managedCoreIds) {
             std::string managedCpusetPath =
                 arbiterCpusetPath + "/Managed" + std::to_string(core);
             createCpuset(managedCpusetPath, std::to_string(core), "0");
@@ -170,7 +170,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         }
     }
 
-    for (core_t coreId : managedCoreIds) {
+    for (int coreId : managedCoreIds) {
         std::string managedTasksPath = arbiterCpusetPath + "/Managed" +
                                        std::to_string(coreId) + "/tasks";
         struct CoreInfo* core = new CoreInfo(coreId, managedTasksPath);
@@ -1064,7 +1064,7 @@ CoreArbiterServer::distributeCores()
                 if (!testingSkipSocketCommunication) {
                     // Wake up the thread
                     // TimeTrace::record("SERVER: Sending wakeup");
-                    if (!sendData(thread->socket, &core->id, sizeof(core_t),
+                    if (!sendData(thread->socket, &core->id, sizeof(int),
                                   "Error sending core ID to thread " +
                                         std::to_string(thread->id))) {
                         exit(-1);

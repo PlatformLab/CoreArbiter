@@ -32,14 +32,12 @@
 namespace CoreArbiter {
 
 thread_local int CoreArbiterClient::serverSocket = -1;
-thread_local core_t CoreArbiterClient::coreId = -1;
+thread_local int CoreArbiterClient::coreId = -1;
 
 static Syscall defaultSyscall;
 Syscall* CoreArbiterClient::sys = &defaultSyscall;
 
 bool CoreArbiterClient::testingSkipConnectionSetup = false;
-
-
 
 /**
  * Private constructor because CoreArbiterClient is a singleton class. The
@@ -189,7 +187,7 @@ CoreArbiterClient::threadPreempted()
  * \return
  *     The core ID of the core that this thread has woken up on.
  */
-core_t
+int
 CoreArbiterClient::blockUntilCoreAvailable()
 {
     if (serverSocket < 0) {
@@ -228,7 +226,7 @@ CoreArbiterClient::blockUntilCoreAvailable()
     LOG(NOTICE, "Thread %d is blocking until message received from server",
         sys->gettid());
     coreId = -1;
-    readData(serverSocket, &coreId, sizeof(core_t),
+    readData(serverSocket, &coreId, sizeof(int),
              "Error receiving core ID from server");
 
     LOG(NOTICE, "Thread %d woke up on core %d.", sys->gettid(), coreId);
@@ -261,7 +259,7 @@ CoreArbiterClient::unregisterThread()
     }
 }
 
-core_t
+int
 CoreArbiterClient::getCoreId()
 {
     return coreId;

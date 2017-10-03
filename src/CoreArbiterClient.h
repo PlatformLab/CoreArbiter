@@ -56,10 +56,10 @@ class CoreArbiterClient {
     virtual void setRequestedCores(std::vector<uint32_t> numCores);
     virtual bool mustReleaseCore();
     virtual bool threadPreempted();
-    virtual core_t blockUntilCoreAvailable();
+    virtual int blockUntilCoreAvailable();
     virtual uint32_t getNumOwnedCores();
     virtual void unregisterThread();
-    virtual core_t getCoreId();
+    virtual int getCoreId();
 
     // Meant for testing, not general use
     uint32_t getNumOwnedCoresFromServer();
@@ -143,7 +143,7 @@ class CoreArbiterClient {
     // indicates that the server has not assigned a core to this thread. Every
     // thread has its own coreId. This ID is NOT accurate for threads that have
     // been preempted from their managed core.
-    static thread_local core_t coreId;
+    static thread_local int coreId;
 
     // Used for all syscalls for easier unit testing.
     static Syscall* sys;

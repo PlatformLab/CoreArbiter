@@ -158,8 +158,8 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 
     // This time thread should block because it owes the server a core
     client.processStats->coreReleaseRequestCount = 1;
-    core_t coreId = 2;
-    send(serverSocket, &coreId, sizeof(core_t), 0);
+    int coreId = 2;
+    send(serverSocket, &coreId, sizeof(int), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
     EXPECT_EQ(client.coreReleaseCount, 1u);
     EXPECT_EQ(client.coreReleasePendingCount, 0u);
@@ -167,7 +167,7 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 
     // Same test, but this time with a pending release
     client.processStats->coreReleaseRequestCount = 1;
-    send(serverSocket, &coreId, sizeof(core_t), 0);
+    send(serverSocket, &coreId, sizeof(int), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
     EXPECT_EQ(client.coreReleaseCount, 1u);
     EXPECT_EQ(client.coreReleasePendingCount, 0u);
