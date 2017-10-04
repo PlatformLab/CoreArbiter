@@ -82,6 +82,10 @@ class CoreArbiterServer {
         // thread on this core that ran sched_getcpu().
         int id;
 
+        // The ID of this core's hypertwin. This ID matches what would be returned by a
+        // thread on the hypertwin that ran sched_getcpu().
+        int hypertwin_id;
+
         // A pointer to the thread running on this core if the core is managed.
         // NULL otherwise.
         struct ThreadInfo* managedThread;
@@ -101,8 +105,9 @@ class CoreArbiterServer {
             : managedThread(NULL)
         {}
 
-        CoreInfo(int id, std::string managedTasksPath)
+        CoreInfo(int id, int hypertwin_id, std::string managedTasksPath)
             : id(id)
+            , hypertwin_id(hypertwin_id)
             , managedThread(NULL)
             , cpusetFilename(managedTasksPath)
             , threadRemovalTime(0)
@@ -252,6 +257,8 @@ class CoreArbiterServer {
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
     void installSignalHandler();
+
+    int getHyperTwin(int coreId);
 
     // The path to the socket that the server is listening for new connections
     // on.

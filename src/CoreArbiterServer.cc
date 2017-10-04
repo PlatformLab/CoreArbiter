@@ -173,7 +173,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     for (int coreId : managedCoreIds) {
         std::string managedTasksPath = arbiterCpusetPath + "/Managed" +
                                        std::to_string(coreId) + "/tasks";
-        struct CoreInfo* core = new CoreInfo(coreId, managedTasksPath);
+        struct CoreInfo* core = new CoreInfo(coreId, getHyperTwin(coreId), managedTasksPath);
         unmanagedCores.push_back(core);
     }
 
@@ -1017,11 +1017,28 @@ CoreArbiterServer::distributeCores()
         size_t numCoresToMakeManaged =
             numAssignedCores - managedCores.size();
         LOG(NOTICE, "Making %lu cores managed", numCoresToMakeManaged);
-        managedCores.insert(managedCores.end(),
-                              unmanagedCores.end() - numCoresToMakeManaged,
-                              unmanagedCores.end());
-        unmanagedCores.erase(unmanagedCores.end() - numCoresToMakeManaged,
-                              unmanagedCores.end());
+        // Ensure hypertwin of managed core not managd unless unavoidable
+        for (int i = 0; i < (int) numCoresToMakeManaged; i++) {
+
+            int coreIdToManageIndex = 0;
+            for (int j = 0; j < (int) unmanagedCores.size(); j++) {
+                bool match = false;
+                for (int k = 0; k < (int) managedCores.size(); 
+                    k++) {
+                    if (unmanagedCores[j]->id == managedCores[k]->hypertwin_id) {
+                        match = true;
+                    }
+                }
+                if (!match) {
+                    coreIdToManageIndex = j;
+                    break;
+                }
+            }
+
+            managedCores.insert(managedCores.end(), unmanagedCores[coreIdToManageIndex]);
+            printf("Core allocated: %d\n", managedCores.back()->id);
+            unmanagedCores.erase(unmanagedCores.begin() + coreIdToManageIndex);
+        }
 
         // Update the unmanaged cpuset now so that threads it will be updated
         // by the time we wake up managed threads
@@ -1576,6 +1593,22 @@ CoreArbiterServer::installSignalHandler() {
         LOG(ERROR, "Couldn't set signal handler for SIGSEGV");
     if (sigaction(SIGABRT, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGABRT");
+}
+/** Returns the CPU ID of coreID's hypertwin.  If there is no hypertwin, return -1.
+  * The returned ID matches what would be returned by a thread on the hypertwin
+  * (if a hypertwin exists) that ran sched_getcpu().
+  *
+  * \param coreId
+  *     The coreId whose hypertwin's ID will be returned.
+  */
+int
+CoreArbiterServer::getHyperTwin(int coreId) {
+    // Obvious placeholder
+    // if (coreId % 2) 
+    //     return coreId + 1;
+    // else
+    //     return coreId - 1;
+    return -1;
 }
 
 } // namespace CoreArbiter
