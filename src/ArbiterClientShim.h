@@ -53,12 +53,7 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
 
   private:
     /**
-     * Initiate shimLock to be non-yielding.
-     * NB: Since the lock is taken inside the Arachne dispatch() method
-     * which may be polling on an unocupied context, it is not safe to for the
-     * lock to enter dispatch() again. This is because a wakeup flag set up by
-     * a createThread() may get wiped out when the nested dispatch call
-     * returns.
+     * Private constructor for ArbiterClientShim.
      */
     ArbiterClientShim()
         : CoreArbiter::CoreArbiterClient(""),
@@ -86,6 +81,13 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
       * currentRequestedCores and currentCores, or writing currentCores.
       */
     std::mutex shimLock;
+    /*
+     * NB: Since shimLock is taken inside the Arachne dispatch() method
+     * which may be polling on an unocupied context, it is not safe to for the
+     * lock to enter dispatch() again. This is because a wakeup flag set up by
+     * a createThread() may get wiped out when the nested dispatch call
+     * returns.
+     */
 };
 
 } // namespace Arachne

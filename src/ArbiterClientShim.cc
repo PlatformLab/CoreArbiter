@@ -17,20 +17,19 @@
 
 namespace Arachne {
 
-/**
-  * Block until setRequestedCores with a higher number causes a notification on
-  * this semaphor.
-  */
+/** 
+ * Implements functionality of CoreArbiterClient::blockUntilCoreAvailable.
+**/
 int ArbiterClientShim::blockUntilCoreAvailable() {
     waitingForAvailableCore.wait();
     return sched_getcpu();
 }
 
 /**
-  * Returns true iff currentRequestedCores <= currentCores.
-  */
+ * Implements functionality of CoreArbiterClient::mustReleaseCore.
+**/
 bool ArbiterClientShim::mustReleaseCore() {
-    // Double-checked locking
+    // Avoid acquiring lock if possible.
     if (currentRequestedCores >= currentCores)
         return false;
 
@@ -42,10 +41,14 @@ bool ArbiterClientShim::mustReleaseCore() {
     return false;
 }
 
+
+
 /**
-  * Adjust the number of requested cores, and unblock threads if there are more
-  * requested cores than there used to be.
-  */
+ * Implements functionality of CoreArbiterClient::setRequestedCores.
+ *
+ * \param numCores
+ *     Same as in CoreArbiterClient::setRequestedCores.
+ */
 void ArbiterClientShim::setRequestedCores(std::vector<uint32_t> numCores) {
     uint32_t sum = 0;
     for (uint32_t i : numCores)
@@ -61,7 +64,11 @@ void ArbiterClientShim::setRequestedCores(std::vector<uint32_t> numCores) {
     }
 }
 
-// Since there is no server, this function is a no-op.
-void ArbiterClientShim::unregisterThread() { }
+/**
+ * Implements functionality of CoreArbiterClient::unregisterThread.
+**/
+void ArbiterClientShim::unregisterThread() { 
+  // Because there is no server, this function is a no-op.
+}
 
 } // namespace Arachne
