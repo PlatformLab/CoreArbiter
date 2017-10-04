@@ -1017,7 +1017,7 @@ CoreArbiterServer::distributeCores()
         size_t numCoresToMakeManaged =
             numAssignedCores - managedCores.size();
         LOG(NOTICE, "Making %lu cores managed", numCoresToMakeManaged);
-        // Ensure hypertwin of managed core not managd unless unavoidable
+        // Ensure hypertwin of managed core not managed unless unavoidable.
         for (int i = 0; i < (int) numCoresToMakeManaged; i++) {
 
             int coreIdToManageIndex = 0;
@@ -1036,7 +1036,7 @@ CoreArbiterServer::distributeCores()
             }
 
             managedCores.insert(managedCores.end(), unmanagedCores[coreIdToManageIndex]);
-            printf("Core allocated: %d\n", managedCores.back()->id);
+            // printf("Core allocated: %d\n", managedCores.back()->id);
             unmanagedCores.erase(unmanagedCores.begin() + coreIdToManageIndex);
         }
 
@@ -1594,7 +1594,7 @@ CoreArbiterServer::installSignalHandler() {
     if (sigaction(SIGABRT, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGABRT");
 }
-/** Returns the CPU ID of coreID's hypertwin.  If there is no hypertwin, return -1.
+/** Returns the CPU ID of coreId's hypertwin.  If there is no hypertwin, return -1.
   * The returned ID matches what would be returned by a thread on the hypertwin
   * (if a hypertwin exists) that ran sched_getcpu().
   *
