@@ -32,6 +32,7 @@
 #include "Logger.h"
 #include "Syscall.h"
 #include "PerfUtils/Cycles.h"
+#include "PerfUtils/Util.h"
 
 #define MAX_EPOLL_EVENTS 1000
 
@@ -105,9 +106,9 @@ class CoreArbiterServer {
             : managedThread(NULL)
         {}
 
-        CoreInfo(int id, int hypertwin_id, std::string managedTasksPath)
+        CoreInfo(int id, std::string managedTasksPath)
             : id(id)
-            , hypertwin_id(hypertwin_id)
+            , hypertwin_id(PerfUtils::Util::getHyperTwin(id))
             , managedThread(NULL)
             , cpusetFilename(managedTasksPath)
             , threadRemovalTime(0)
@@ -257,8 +258,6 @@ class CoreArbiterServer {
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
     void installSignalHandler();
-
-    int getHyperTwin(int coreId);
 
     // The path to the socket that the server is listening for new connections
     // on.
