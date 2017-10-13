@@ -83,9 +83,8 @@ class CoreArbiterServer {
         // thread on this core that ran sched_getcpu().
         int id;
 
-        // The ID of this core's hypertwin. This ID matches what would be returned by a
-        // thread on the hypertwin that ran sched_getcpu().
-        int hypertwin_id;
+        // The ID of the physical core this core corresponds to.
+        int physicalCoreId;
 
         // A pointer to the thread running on this core if the core is managed.
         // NULL otherwise.
@@ -108,7 +107,7 @@ class CoreArbiterServer {
 
         CoreInfo(int id, std::string managedTasksPath)
             : id(id)
-            , hypertwin_id(PerfUtils::Util::getHyperTwin(id))
+            , physicalCoreId(PerfUtils::Util::getPhysicalCore(id))
             , managedThread(NULL)
             , cpusetFilename(managedTasksPath)
             , threadRemovalTime(0)

@@ -1021,14 +1021,13 @@ CoreArbiterServer::distributeCores()
 
             int coreIdToManageIndex = 0;
             for (int j = 0; j < (int) unmanagedCores.size(); j++) {
-                bool match = false;
-                for (int k = 0; k < (int) managedCores.size(); 
-                    k++) {
-                    if (unmanagedCores[j]->id == managedCores[k]->hypertwin_id) {
-                        match = true;
+                bool matchingPhysicalCore = false;
+                for (int k = 0; k < (int) managedCores.size(); k++) {
+                    if (unmanagedCores[j]->physicalCoreId == managedCores[k]->physicalCoreId) {
+                        matchingPhysicalCore = true;
                     }
                 }
-                if (!match) {
+                if (!matchingPhysicalCore) {
                     coreIdToManageIndex = j;
                     break;
                 }
