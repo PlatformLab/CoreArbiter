@@ -1,5 +1,5 @@
 CC=g++
-CCFLAGS=-g -Wall -Werror -Wformat=2 -Wextra -Wwrite-strings \
+CCFLAGS=-g -Wall -Wformat=2 -Wextra -Wwrite-strings \
 -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend \
 -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer \
 -std=c++11 -fPIC -O3
