@@ -27,8 +27,6 @@
 #define THREAD_BLOCK 1
 #define CORE_REQUEST 2
 
-typedef int core_t;
-
 namespace CoreArbiter{
 
 /**

@@ -23,7 +23,7 @@ using CoreArbiter::Logger;
 
 std::string socketPath = "/tmp/CoreArbiter/testsocket";
 std::string sharedMemoryPath = "/tmp/CoreArbiter/testmem";
-std::vector<core_t> coresUsed = std::vector<core_t>();
+std::vector<int> coresUsed = std::vector<int>();
 
 /**
   * This function currently supports only long options.
@@ -92,7 +92,7 @@ parseOptions(int* argcp, const char** argv) {
                 break;
             case 's':
                 if (memcmp(optionArgument, "ALL", sizeof("ALL")) == 0)
-                    coresUsed = std::vector<core_t>();
+                    coresUsed = std::vector<int>();
                 else
                     coresUsed = PerfUtils::Util::parseRanges(optionArgument);
                 break;

@@ -14,10 +14,12 @@
  */
 
 #define private public
+#define protected public
 
 #include "gtest/gtest.h"
 #include "MockSyscall.h"
 #include "CoreArbiterClient.h"
+#include "ArbiterClientShim.h"
 #include "Logger.h"
 
 namespace CoreArbiter {
@@ -34,6 +36,7 @@ class CoreArbiterClientTest : public ::testing::Test {
     GlobalStats globalStats;
 
     CoreArbiterClient client;
+    Arachne::ArbiterClientShim shim_client;
 
     CoreArbiterClientTest()
         : socketPath("/tmp/CoreArbiter/testsocket")
@@ -155,8 +158,8 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 
     // This time thread should block because it owes the server a core
     client.processStats->coreReleaseRequestCount = 1;
-    core_t coreId = 2;
-    send(serverSocket, &coreId, sizeof(core_t), 0);
+    int coreId = 2;
+    send(serverSocket, &coreId, sizeof(int), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
     EXPECT_EQ(client.coreReleaseCount, 1u);
     EXPECT_EQ(client.coreReleasePendingCount, 0u);
@@ -164,7 +167,7 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 
     // Same test, but this time with a pending release
     client.processStats->coreReleaseRequestCount = 1;
-    send(serverSocket, &coreId, sizeof(core_t), 0);
+    send(serverSocket, &coreId, sizeof(int), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
     EXPECT_EQ(client.coreReleaseCount, 1u);
     EXPECT_EQ(client.coreReleasePendingCount, 0u);
@@ -178,6 +181,20 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 TEST_F(CoreArbiterClientTest, getNumOwnedCores) {
     client.numOwnedCores = 99;
     EXPECT_EQ(client.getNumOwnedCores(), 99u);
+}
+
+TEST_F(CoreArbiterClientTest, setRequestedCores_shim) {
+
+    shim_client.setRequestedCores({0, 1, 2, 3, 4, 5, 6, 7});
+    ASSERT_EQ(shim_client.currentRequestedCores, (unsigned) 28);
+
+}
+
+TEST_F(CoreArbiterClientTest, mustReleaseCore_shim) {
+
+    shim_client.currentCores = 26;
+    ASSERT_EQ(shim_client.mustReleaseCore(), true);
+
 }
 
 } // namespace CoreArbiter
