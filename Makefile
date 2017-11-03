@@ -1,4 +1,4 @@
-CC=g++
+CXX ?= g++
 CCFLAGS=-g -Wall -Wformat=2 -Wextra -Wwrite-strings \
 -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend \
 -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer \
@@ -38,10 +38,10 @@ install: $(SERVER_BIN) $(CLIENT_BIN)
 	cp $(OBJECT_DIR)/libCoreArbiter.a lib
 
 $(SERVER_BIN): $(OBJECT_DIR)/CoreArbiterServerMain.o $(OBJECT_DIR)/libCoreArbiter.a
-	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
+	$(CXX) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
 
 $(CLIENT_BIN): $(OBJECT_DIR)/CoreArbiterClientMain.o $(OBJECT_DIR)/libCoreArbiter.a
-	$(CC) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
+	$(CXX) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
 
 $(OBJECT_DIR)/libCoreArbiter.a: $(OBJECTS)
 	ar rcs $@ $^	
@@ -49,10 +49,10 @@ $(OBJECT_DIR)/libCoreArbiter.a: $(OBJECTS)
 -include $(DEP)
 
 $(OBJECT_DIR)/%.d: $(SRC_DIR)/%.cc | $(OBJECT_DIR)
-	$(CC) $(INCLUDE) $(CCFLAGS) $< -MM -MT $(@:.d=.o) > $@
+	$(CXX) $(INCLUDE) $(CCFLAGS) $< -MM -MT $(@:.d=.o) > $@
 
 $(OBJECT_DIR)/%.o: $(SRC_DIR)/%.cc $(HEADERS) | $(OBJECT_DIR)
-	$(CC) $(INCLUDE) $(CCFLAGS) -c $< -o $@
+	$(CXX) $(INCLUDE) $(CCFLAGS) -c $< -o $@
 
 $(OBJECT_DIR):
 	mkdir -p $(OBJECT_DIR)
@@ -73,13 +73,13 @@ test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest
 	$(OBJECT_DIR)/CoreArbiterClientTest
 
 $(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
-	$(CC) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
+	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
 $(OBJECT_DIR)/CoreArbiterClientTest: $(OBJECT_DIR)/CoreArbiterClientTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
-	$(CC) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
+	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
 $(OBJECT_DIR)/libgtest.a:
-	g++ -I${GTEST_DIR}/include -I${GTEST_DIR} \
+	$(CXX) -I${GTEST_DIR}/include -I${GTEST_DIR} \
 		-pthread -c ${GTEST_DIR}/src/gtest-all.cc \
 		-o $(OBJECT_DIR)/gtest-all.o
 	ar -rv $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/gtest-all.o
