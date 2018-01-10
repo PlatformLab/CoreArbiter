@@ -1548,7 +1548,7 @@ void signalHandler(int signum) {
     sigaction(signum, &signalAction, NULL);
 
     // Process the signal
-    if (signum == SIGINT)  {
+    if ((signum == SIGINT) || (signum == SIGTERM)) {
         std::thread([&]{
             CoreArbiterServer* mostRecentInstance =
                 CoreArbiterServer::mostRecentInstance;
@@ -1556,7 +1556,7 @@ void signalHandler(int signum) {
                 mostRecentInstance->endArbitration();
             }
         }).detach();
-    } else if (signum == SIGSEGV || signum == SIGABRT) {
+    } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
     }
 }
@@ -1572,6 +1572,9 @@ CoreArbiterServer::installSignalHandler() {
     signalAction.sa_flags = SA_RESTART;
     if (sigaction(SIGINT, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGINT");
+		if (sigaction(SIGTERM, &signalAction, NULL) != 0)
+        LOG(ERROR, "Couldn't set signal handler for SIGTERM");
+
     if (sigaction(SIGSEGV, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGSEGV");
     if (sigaction(SIGABRT, &signalAction, NULL) != 0)
