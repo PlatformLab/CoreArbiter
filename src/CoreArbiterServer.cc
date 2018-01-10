@@ -1572,7 +1572,7 @@ CoreArbiterServer::installSignalHandler() {
     signalAction.sa_flags = SA_RESTART;
     if (sigaction(SIGINT, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGINT");
-		if (sigaction(SIGTERM, &signalAction, NULL) != 0)
+    if (sigaction(SIGTERM, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGTERM");
 
     if (sigaction(SIGSEGV, &signalAction, NULL) != 0)
