@@ -28,7 +28,7 @@ OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')
 DEP=$(OBJECTS:.o=.d)
 
-SERVER_BIN = $(OBJECT_DIR)/server
+SERVER_BIN = $(OBJECT_DIR)/coreArbiterServer
 CLIENT_BIN =  $(OBJECT_DIR)/client
 
 install: $(SERVER_BIN) $(CLIENT_BIN)
