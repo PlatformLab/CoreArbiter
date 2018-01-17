@@ -806,6 +806,10 @@ void
 CoreArbiterServer::cleanupConnection(int socket)
 {
     sys->close(socket);
+    if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
+        LOG(WARNING, "Unknown thread");
+        return;
+    }
     ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
 
@@ -1067,8 +1071,15 @@ CoreArbiterServer::distributeCores()
                     if (!sendData(thread->socket, &core->id, sizeof(int),
                                   "Error sending core ID to thread " +
                                         std::to_string(thread->id))) {
-                        exit(-1);
-                        return;
+                        if (errno == EPIPE) {
+                            // The system got a broken pipe error, then clean
+                            // up the connection.
+                            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
+                                           thread->socket, NULL);
+                            cleanupConnection(thread->socket);
+                        } else {
+                            exit(-1);
+                        }
                     }
                     // TimeTrace::record("SERVER: Finished sending wakeup\n");
                     LOG(DEBUG, "Sent wakeup");
@@ -1211,7 +1222,10 @@ bool
 CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
                             std::string err)
 {
-    if (sys->send(socket, buf, numBytes, 0) < 0) {
+    // Don't generate a SIGPIPE signal if the peer on a stream-
+    // oriented socket has closed the connection.  
+    // The EPIPE error is still returned.
+    if (sys->send(socket, buf, numBytes, MSG_NOSIGNAL) < 0) {
         LOG(ERROR, "%s: %s", err.c_str(), strerror(errno));
         return false;
     }
@@ -1558,7 +1572,7 @@ void signalHandler(int signum) {
         }).detach();
     } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
-    }
+    } 
 }
 
 /**

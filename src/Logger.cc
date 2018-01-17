@@ -64,6 +64,7 @@ void Logger::log(const CodeLocation& where, LogLevel level,
         fprintf(stderr, "%s\n", buffer);
     } else {
         printf("%s\n", buffer);
+        fflush(stdout);
     }
 }
 
