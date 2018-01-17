@@ -106,7 +106,7 @@ parseOptions(int* argcp, const char** argv) {
 }
 
 int main(int argc, const char** argv) {
-    Logger::setLogLevel(CoreArbiter::NOTICE);
+    Logger::setLogLevel(CoreArbiter::ERROR);
     parseOptions(&argc, argv);
     printf("socketPath:       %s\n", socketPath.c_str());
     printf("sharedMemoryPath: %s\n", sharedMemoryPath.c_str());
