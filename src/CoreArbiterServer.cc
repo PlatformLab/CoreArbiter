@@ -1067,8 +1067,12 @@ CoreArbiterServer::distributeCores()
                     if (!sendData(thread->socket, &core->id, sizeof(int),
                                   "Error sending core ID to thread " +
                                         std::to_string(thread->id))) {
-                        exit(-1);
-                        return;
+                        // TODO(Qian): is it a good solution to ignore error?
+                        // The client side did not close TCP connection 
+                        // in a normal way, which caused the failure
+                        LOG(WARNING, "Pending to clean up state for thread %s",
+                            std::to_string(thread->id).c_str());
+                        continue;
                     }
                     // TimeTrace::record("SERVER: Finished sending wakeup\n");
                     LOG(DEBUG, "Sent wakeup");
@@ -1558,6 +1562,13 @@ void signalHandler(int signum) {
         }).detach();
     } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
+    } else if (signum == SIGPIPE) {
+        // Ignore SIGPIPE and allow repeated invocations
+        signalAction.sa_handler = signalHandler;
+        signalAction.sa_flags = 0;
+        sigaction(signum, &signalAction, NULL);
+        LOG(WARNING, "Received SIGPIPE: connection was not closed normally");
+        return;
     }
 }
 
@@ -1579,6 +1590,11 @@ CoreArbiterServer::installSignalHandler() {
         LOG(ERROR, "Couldn't set signal handler for SIGSEGV");
     if (sigaction(SIGABRT, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGABRT");
+
+    // Set sa_flags to 0 to ensure the function fail
+    signalAction.sa_flags = 0;
+    if (sigaction(SIGPIPE, &signalAction, NULL) != 0)
+        LOG(ERROR, "Couldn't set signal handler for SIGPIPE");
 }
 
 } // namespace CoreArbiter
