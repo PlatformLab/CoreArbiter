@@ -805,8 +805,9 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
 void
 CoreArbiterServer::cleanupConnection(int socket)
 {
-    if (sys->close(socket) == -1) {
-        // The socket was closed before, just return
+    sys->close(socket);
+    if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
+        LOG(WARNING, "Unknown thread");
         return;
     }
     ThreadInfo* thread = threadSocketToInfo[socket];
@@ -1070,12 +1071,15 @@ CoreArbiterServer::distributeCores()
                     if (!sendData(thread->socket, &core->id, sizeof(int),
                                   "Error sending core ID to thread " +
                                         std::to_string(thread->id))) {
-                        // The client side did not close TCP connection 
-                        // in a normal way, which caused the failure.
-                        // Then we just clean up the connection here.
-                        sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
-                                       thread->socket, NULL);
-                        cleanupConnection(thread->socket);
+                        if (errno == EPIPE) {
+                            // The system got a broken pipe error, then clean
+                            // up the connection.
+                            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
+                                           thread->socket, NULL);
+                            cleanupConnection(thread->socket);
+                        } else {
+                            exit(-1);
+                        }
                     }
                     // TimeTrace::record("SERVER: Finished sending wakeup\n");
                     LOG(DEBUG, "Sent wakeup");
@@ -1218,7 +1222,10 @@ bool
 CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
                             std::string err)
 {
-    if (sys->send(socket, buf, numBytes, 0) < 0) {
+    // Don't generate a SIGPIPE signal if the peer on a stream-
+    // oriented socket has closed the connection.  
+    // The EPIPE error is still returned.
+    if (sys->send(socket, buf, numBytes, MSG_NOSIGNAL) < 0) {
         LOG(ERROR, "%s: %s", err.c_str(), strerror(errno));
         return false;
     }
@@ -1565,13 +1572,7 @@ void signalHandler(int signum) {
         }).detach();
     } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
-    } else if (signum == SIGPIPE) {
-        // Ignore SIGPIPE and allow repeated invocations
-        signalAction.sa_handler = signalHandler;
-        sigaction(signum, &signalAction, NULL);
-        LOG(WARNING, "Received SIGPIPE: connection was not closed normally");
-        return;
-    }
+    } 
 }
 
 /**
@@ -1592,8 +1593,6 @@ CoreArbiterServer::installSignalHandler() {
         LOG(ERROR, "Couldn't set signal handler for SIGSEGV");
     if (sigaction(SIGABRT, &signalAction, NULL) != 0)
         LOG(ERROR, "Couldn't set signal handler for SIGABRT");
-    if (sigaction(SIGPIPE, &signalAction, NULL) != 0)
-        LOG(ERROR, "Couldn't set signal handler for SIGPIPE");
 }
 
 } // namespace CoreArbiter
