@@ -51,7 +51,6 @@ class Logger {
         errorStream = stream;
     }
 
-
     /**
      * Print a message to the console at a given severity level. Accepts
      * printf-style format strings.

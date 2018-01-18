@@ -1572,7 +1572,7 @@ void signalHandler(int signum) {
         }).detach();
     } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
-    } 
+    }
 }
 
 /**
