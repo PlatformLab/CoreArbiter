@@ -409,7 +409,9 @@ bool CoreArbiterServer::handleEvents()
             timeoutThreadPreemption(socket);
             sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
                            socket, &events[i]);
-            sys->close(socket);
+            if (sys->close(socket) < 0) {
+                LOG(ERROR, "Error closing socket: %s", strerror(errno));
+            }
         } else if (socket == terminationFd) {
             return false;
         } else {
@@ -805,15 +807,17 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
 void
 CoreArbiterServer::cleanupConnection(int socket)
 {
-    sys->close(socket);
     if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
-        LOG(WARNING, "Unknown thread");
         return;
     }
     ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
 
     LOG(NOTICE, "Cleaning up state for thread %d", thread->id);
+
+    if (sys->close(socket) < 0) {
+        LOG(ERROR, "Error closing socket: %s", strerror(errno));
+    }
 
     // We'll only distribute cores at the end if necessary
     bool shouldDistributeCores = false;
@@ -858,7 +862,9 @@ CoreArbiterServer::cleanupConnection(int socket)
     if (noRemainingThreads) {
         LOG(NOTICE, "All of process %d's threads have exited. Removing all "
             "process records.\n", process->id);
-        sys->close(process->sharedMemFd);
+        if (sys->close(process->sharedMemFd) < 0) {
+            LOG(ERROR, "Error closing sharedMemFd: %s", strerror(errno));
+        }
         processIdToInfo.erase(process->id);
 
         // Remove this process from the core priority queue
@@ -1572,7 +1578,7 @@ void signalHandler(int signum) {
         }).detach();
     } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
-    } 
+    }
 }
 
 /**

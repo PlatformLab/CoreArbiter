@@ -44,6 +44,14 @@ class Logger {
     }
 
     /**
+      * Change the target of the error stream, allowing redirection to an
+      * application's log.
+      */
+    static void setErrorStream(FILE* stream) {
+        errorStream = stream;
+    }
+
+    /**
      * Print a message to the console at a given severity level. Accepts
      * printf-style format strings.
      *
@@ -63,6 +71,9 @@ class Logger {
     // Lock around printing since CoreArbiterClient has threads.
     typedef std::unique_lock<std::mutex> Lock;
     static std::mutex mutex;
+
+    // Used to allow redirection of error messages.
+    static FILE* errorStream;
 };
 
 } //namespace CoreArbiter
