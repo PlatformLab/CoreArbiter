@@ -20,6 +20,7 @@ namespace CoreArbiter {
 
 using PerfUtils::Cycles;
 
+FILE* Logger::errorStream = stderr;
 LogLevel Logger::displayMinLevel = NOTICE;
 std::mutex Logger::mutex;
 
@@ -60,11 +61,8 @@ void Logger::log(const CodeLocation& where, LogLevel level,
     va_end(args);
 
     Lock lock(mutex);
-    if (level == ERROR) {
-        fprintf(stderr, "%s\n", buffer);
-    } else {
-        printf("%s\n", buffer);
-    }
+    fprintf(errorStream, "%s\n", buffer);
+    fflush(errorStream);
 }
 
 } // namespace CoreArbiter

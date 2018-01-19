@@ -118,6 +118,7 @@ int main(int argc, const char** argv) {
             printf(" %d", coresUsed[i]);
         putchar('\n');
     }
+    fflush(stdout);
 
     CoreArbiterServer server(socketPath,
                              sharedMemoryPath,

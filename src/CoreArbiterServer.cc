@@ -409,7 +409,9 @@ bool CoreArbiterServer::handleEvents()
             timeoutThreadPreemption(socket);
             sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
                            socket, &events[i]);
-            sys->close(socket);
+            if (sys->close(socket) < 0) {
+                LOG(ERROR, "Error closing socket: %s", strerror(errno));
+            }
         } else if (socket == terminationFd) {
             return false;
         } else {
@@ -805,11 +807,17 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
 void
 CoreArbiterServer::cleanupConnection(int socket)
 {
-    sys->close(socket);
+    if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
+        return;
+    }
     ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
 
     LOG(NOTICE, "Cleaning up state for thread %d", thread->id);
+
+    if (sys->close(socket) < 0) {
+        LOG(ERROR, "Error closing socket: %s", strerror(errno));
+    }
 
     // We'll only distribute cores at the end if necessary
     bool shouldDistributeCores = false;
@@ -854,7 +862,9 @@ CoreArbiterServer::cleanupConnection(int socket)
     if (noRemainingThreads) {
         LOG(NOTICE, "All of process %d's threads have exited. Removing all "
             "process records.\n", process->id);
-        sys->close(process->sharedMemFd);
+        if (sys->close(process->sharedMemFd) < 0) {
+            LOG(ERROR, "Error closing sharedMemFd: %s", strerror(errno));
+        }
         processIdToInfo.erase(process->id);
 
         // Remove this process from the core priority queue
@@ -1067,8 +1077,15 @@ CoreArbiterServer::distributeCores()
                     if (!sendData(thread->socket, &core->id, sizeof(int),
                                   "Error sending core ID to thread " +
                                         std::to_string(thread->id))) {
-                        exit(-1);
-                        return;
+                        if (errno == EPIPE) {
+                            // The system got a broken pipe error, then clean
+                            // up the connection.
+                            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
+                                           thread->socket, NULL);
+                            cleanupConnection(thread->socket);
+                        } else {
+                            exit(-1);
+                        }
                     }
                     // TimeTrace::record("SERVER: Finished sending wakeup\n");
                     LOG(DEBUG, "Sent wakeup");
@@ -1211,7 +1228,10 @@ bool
 CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
                             std::string err)
 {
-    if (sys->send(socket, buf, numBytes, 0) < 0) {
+    // Don't generate a SIGPIPE signal if the peer on a stream-
+    // oriented socket has closed the connection.  
+    // The EPIPE error is still returned.
+    if (sys->send(socket, buf, numBytes, MSG_NOSIGNAL) < 0) {
         LOG(ERROR, "%s: %s", err.c_str(), strerror(errno));
         return false;
     }
