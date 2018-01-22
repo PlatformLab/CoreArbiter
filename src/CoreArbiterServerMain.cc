@@ -16,7 +16,6 @@
 #include <string.h>
 #include "CoreArbiterServer.h"
 #include "Logger.h"
-#include "PerfUtils/Util.h"
 
 using CoreArbiter::CoreArbiterServer;
 using CoreArbiter::Logger;

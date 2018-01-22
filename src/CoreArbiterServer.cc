@@ -25,7 +25,6 @@
 
 #include "CoreArbiterServer.h"
 // #include "PerfUtils/TimeTrace.h"
-// #include "PerfUtils/Util.h"
 
 // using PerfUtils::TimeTrace;
 
@@ -1027,11 +1026,27 @@ CoreArbiterServer::distributeCores()
         size_t numCoresToMakeManaged =
             numAssignedCores - managedCores.size();
         LOG(NOTICE, "Making %lu cores managed", numCoresToMakeManaged);
-        managedCores.insert(managedCores.end(),
-                              unmanagedCores.end() - numCoresToMakeManaged,
-                              unmanagedCores.end());
-        unmanagedCores.erase(unmanagedCores.end() - numCoresToMakeManaged,
-                              unmanagedCores.end());
+        // Ensure hypertwin of managed core not managed unless unavoidable.
+        for (int i = 0; i < (int) numCoresToMakeManaged; i++) {
+
+            int coreIdToManageIndex = 0;
+            for (int j = 0; j < (int) unmanagedCores.size(); j++) {
+                bool matchingPhysicalCore = false;
+                for (int k = 0; k < (int) managedCores.size(); k++) {
+                    if (unmanagedCores[j]->physicalCoreId == managedCores[k]->physicalCoreId) {
+                        matchingPhysicalCore = true;
+                    }
+                }
+                if (!matchingPhysicalCore) {
+                    coreIdToManageIndex = j;
+                    break;
+                }
+            }
+
+            managedCores.insert(managedCores.end(), unmanagedCores[coreIdToManageIndex]);
+            // printf("Core allocated: %d\n", managedCores.back()->id);
+            unmanagedCores.erase(unmanagedCores.begin() + coreIdToManageIndex);
+        }
 
         // Update the unmanaged cpuset now so that threads it will be updated
         // by the time we wake up managed threads

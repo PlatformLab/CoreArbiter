@@ -32,6 +32,7 @@
 #include "Logger.h"
 #include "Syscall.h"
 #include "PerfUtils/Cycles.h"
+#include "PerfUtils/Util.h"
 
 #define MAX_EPOLL_EVENTS 1000
 
@@ -82,6 +83,9 @@ class CoreArbiterServer {
         // thread on this core that ran sched_getcpu().
         int id;
 
+        // The ID of the physical core this core corresponds to.
+        int physicalCoreId;
+
         // A pointer to the thread running on this core if the core is managed.
         // NULL otherwise.
         struct ThreadInfo* managedThread;
@@ -103,6 +107,7 @@ class CoreArbiterServer {
 
         CoreInfo(int id, std::string managedTasksPath)
             : id(id)
+            , physicalCoreId(PerfUtils::Util::getPhysicalCore(id))
             , managedThread(NULL)
             , cpusetFilename(managedTasksPath)
             , threadRemovalTime(0)
