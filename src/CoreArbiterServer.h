@@ -16,22 +16,22 @@
 #ifndef CORE_ARBITER_SERVER_H_
 #define CORE_ARBITER_SERVER_H_
 
-#include <sys/types.h>
 #include <sys/epoll.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
 #include <atomic>
 #include <deque>
 #include <fstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
-#include <stdexcept>
 #include <vector>
 
 #include "CoreArbiterCommon.h"
 #include "Logger.h"
-#include "Syscall.h"
 #include "PerfUtils/Cycles.h"
+#include "Syscall.h"
 
 #define MAX_EPOLL_EVENTS 1000
 
@@ -54,8 +54,7 @@ namespace CoreArbiter {
  */
 class CoreArbiterServer {
   public:
-    CoreArbiterServer(std::string socketPath,
-                      std::string sharedMemPathPrefix,
+    CoreArbiterServer(std::string socketPath, std::string sharedMemPathPrefix,
                       std::vector<int> managedCores = {},
                       bool arbitrateImmediately = true);
     ~CoreArbiterServer();
@@ -97,16 +96,13 @@ class CoreArbiterServer {
         // how long the core has been unoccupied.
         uint64_t threadRemovalTime;
 
-        CoreInfo()
-            : managedThread(NULL)
-        {}
+        CoreInfo() : managedThread(NULL) {}
 
         CoreInfo(int id, std::string managedTasksPath)
-            : id(id)
-            , managedThread(NULL)
-            , cpusetFilename(managedTasksPath)
-            , threadRemovalTime(0)
-        {
+            : id(id),
+              managedThread(NULL),
+              cpusetFilename(managedTasksPath),
+              threadRemovalTime(0) {
             if (!testingSkipCpusetAllocation) {
                 cpusetFile.open(cpusetFilename);
                 if (!cpusetFile.is_open()) {
@@ -165,12 +161,11 @@ class CoreArbiterServer {
         ThreadInfo() {}
 
         ThreadInfo(pid_t threadId, struct ProcessInfo* process, int socket)
-            : id(threadId)
-            , process(process)
-            , socket(socket)
-            , core(NULL)
-            , state(RUNNING_UNMANAGED)
-        {}
+            : id(threadId),
+              process(process),
+              socket(socket),
+              core(NULL),
+              state(RUNNING_UNMANAGED) {}
     };
 
     /**
@@ -204,19 +199,17 @@ class CoreArbiterServer {
 
         // A map of ThreadState to the threads this process owns in that state.
         std::unordered_map<ThreadState, std::unordered_set<struct ThreadInfo*>,
-                          std::hash<int>> threadStateToSet;
+                           std::hash<int>>
+            threadStateToSet;
 
-        ProcessInfo()
-            : desiredCorePriorities(NUM_PRIORITIES)
-        {}
+        ProcessInfo() : desiredCorePriorities(NUM_PRIORITIES) {}
 
         ProcessInfo(pid_t id, int sharedMemFd, struct ProcessStats* stats)
-            : id(id)
-            , sharedMemFd(sharedMemFd)
-            , stats(stats)
-            , coreReleaseCount(0)
-            , desiredCorePriorities(NUM_PRIORITIES)
-        {}
+            : id(id),
+              sharedMemFd(sharedMemFd),
+              stats(stats),
+              coreReleaseCount(0),
+              desiredCorePriorities(NUM_PRIORITIES) {}
     };
 
     /**
@@ -352,8 +345,8 @@ class CoreArbiterServer {
     static bool testingDoNotChangeManagedCores;
 };
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter
 
-int ensureParents(const char *path, mode_t mode = S_IRWXU);
+int ensureParents(const char* path, mode_t mode = S_IRWXU);
 
-#endif // CORE_ARBITER_SERVER_H_
+#endif  // CORE_ARBITER_SERVER_H_

@@ -16,16 +16,15 @@
 #ifndef ARACHNE_SEMAPHORE_H
 #define ARACHNE_SEMAPHORE_H
 
-#include <mutex>
 #include <condition_variable>
+#include <mutex>
 
 /**
-  * This class enables a kernel thread to block in the kernel until a resource
-  * is available. It is a modified version of
-  * https://stackoverflow.com/a/4793662/391161.
-  */
-class Semaphore
-{
+ * This class enables a kernel thread to block in the kernel until a resource
+ * is available. It is a modified version of
+ * https://stackoverflow.com/a/4793662/391161.
+ */
+class Semaphore {
   private:
     // Protect the internal resource count.
     std::mutex mutex;
@@ -54,7 +53,7 @@ class Semaphore
     // Block until this resource is available.
     void wait() {
         std::unique_lock<decltype(mutex)> lock(mutex);
-        while (!count) // Handle spurious wake-ups.
+        while (!count)  // Handle spurious wake-ups.
             condition.wait(lock);
         --count;
     }

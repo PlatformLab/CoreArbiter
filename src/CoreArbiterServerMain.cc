@@ -26,11 +26,12 @@ std::string sharedMemoryPath = "/tmp/CoreArbiter/testmem";
 std::vector<int> coresUsed = std::vector<int>();
 
 /**
-  * This function currently supports only long options.
-  */
+ * This function currently supports only long options.
+ */
 void
 parseOptions(int* argcp, const char** argv) {
-    if (argcp == NULL) return;
+    if (argcp == NULL)
+        return;
 
     int argc = *argcp;
 
@@ -41,11 +42,9 @@ parseOptions(int* argcp, const char** argv) {
         int id;
         // Does the option take an argument?
         bool takesArgument;
-    } optionSpecifiers[] = {
-        {"socketPath", 'p', true},
-        {"sharedMemoryPath", 'm', true},
-        {"coresUsed", 's', true}
-    };
+    } optionSpecifiers[] = {{"socketPath", 'p', true},
+                            {"sharedMemoryPath", 'm', true},
+                            {"coresUsed", 's', true}};
     const int UNRECOGNIZED = ~0;
 
     int i = 1;
@@ -59,19 +58,18 @@ parseOptions(int* argcp, const char** argv) {
         const char* optionArgument = NULL;
 
         for (size_t k = 0;
-                k < sizeof(optionSpecifiers) / sizeof(OptionSpecifier); k++) {
+             k < sizeof(optionSpecifiers) / sizeof(OptionSpecifier); k++) {
             const char* candidateName = optionSpecifiers[k].optionName;
             bool needsArg = optionSpecifiers[k].takesArgument;
-            if (strncmp(candidateName,
-                        optionName, strlen(candidateName)) == 0) {
+            if (strncmp(candidateName, optionName, strlen(candidateName)) ==
+                0) {
                 if (needsArg) {
                     if (i + 1 >= argc) {
                         LOG(CoreArbiter::ERROR,
-                                "Missing argument to option %s!\n",
-                                candidateName);
+                            "Missing argument to option %s!\n", candidateName);
                         break;
                     }
-                    optionArgument = argv[i+1];
+                    optionArgument = argv[i + 1];
                     optionId = optionSpecifiers[k].id;
                     argc -= 2;
                     memmove(argv + i, argv + i + 2, (argc - i) * sizeof(char*));
@@ -98,14 +96,15 @@ parseOptions(int* argcp, const char** argv) {
                 break;
             case UNRECOGNIZED:
                 LOG(CoreArbiter::ERROR, "Unrecognized option %s given.",
-                        optionName);
+                    optionName);
                 abort();
         }
     }
     *argcp = argc;
 }
 
-int main(int argc, const char** argv) {
+int
+main(int argc, const char** argv) {
     Logger::setLogLevel(CoreArbiter::ERROR);
     parseOptions(&argc, argv);
     printf("socketPath:       %s\n", socketPath.c_str());
@@ -120,8 +119,6 @@ int main(int argc, const char** argv) {
     }
     fflush(stdout);
 
-    CoreArbiterServer server(socketPath,
-                             sharedMemoryPath,
-                             coresUsed);
+    CoreArbiterServer server(socketPath, sharedMemoryPath, coresUsed);
     return 0;
 }

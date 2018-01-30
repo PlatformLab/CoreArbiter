@@ -19,20 +19,18 @@
 #include <stdint.h>
 #include <vector>
 
-#include "Semaphore.h"
 #include "CoreArbiterClient.h"
-
+#include "Semaphore.h"
 
 namespace Arachne {
 
 /**
-  * This class functions as a shim, or alternative, for the CoreArbiter 
-  * client so that Arachne can run without the Core Arbiter when the 
-  * arbiter is deactivated.
-  */
+ * This class functions as a shim, or alternative, for the CoreArbiter
+ * client so that Arachne can run without the Core Arbiter when the
+ * arbiter is deactivated.
+ */
 class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
   public:
-
     int blockUntilCoreAvailable();
     bool mustReleaseCore();
     void setRequestedCores(std::vector<uint32_t> numCores);
@@ -57,29 +55,31 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
      */
     ArbiterClientShim()
         : CoreArbiter::CoreArbiterClient(""),
-        waitingForAvailableCore(), currentRequestedCores(), currentCores(),
-        shimLock() { }
+          waitingForAvailableCore(),
+          currentRequestedCores(),
+          currentCores(),
+          shimLock() {}
 
     /**
-      * Threads block on this semaphor while waiting for a core
-      * to become available.
-      */
+     * Threads block on this semaphor while waiting for a core
+     * to become available.
+     */
     ::Semaphore waitingForAvailableCore;
 
     /**
-      * The current number of cores this application prefers to have.
-      */
+     * The current number of cores this application prefers to have.
+     */
     std::atomic<uint64_t> currentRequestedCores;
 
     /**
-      * The current cores held by the application.
-      */
+     * The current cores held by the application.
+     */
     std::atomic<uint64_t> currentCores;
 
     /**
-      * Synchronize between different threads trying to compare
-      * currentRequestedCores and currentCores, or writing currentCores.
-      */
+     * Synchronize between different threads trying to compare
+     * currentRequestedCores and currentCores, or writing currentCores.
+     */
     std::mutex shimLock;
     /*
      * NB: Since shimLock is taken inside the Arachne dispatch() method
@@ -90,5 +90,5 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
      */
 };
 
-} // namespace Arachne
-#endif // ARBITER_CLIENT_SHIM_H
+}  // namespace Arachne
+#endif  // ARBITER_CLIENT_SHIM_H

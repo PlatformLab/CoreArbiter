@@ -16,12 +16,12 @@
 #ifndef CORE_ARBITER_MOCK_SYSCALL
 #define CORE_ARBITER_MOCK_SYSCALL
 
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
 #include <net/if_arp.h>
+#include <netinet/in.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 
 #include "CoreArbiterCommon.h"
 #include "Syscall.h"
@@ -35,24 +35,55 @@ namespace CoreArbiter {
  */
 class MockSyscall : public Syscall {
   public:
-    MockSyscall() : acceptErrno(0), bindErrno(0), chmodErrno(0), closeErrno(0),
-                    closeCount(0), closedirErrno(0), connectErrno(0),
-                    epollCreateErrno(0), epollCtlErrno(0), epollWaitCount(-1),
-                    epollWaitEvents(NULL), epollWaitErrno(0), exitCount(0),
-                    fcntlErrno(0), ftruncateErrno(0), futexWaitErrno(0),
-                    futexWakeErrno(0), fwriteResult(~0LU), callGeteuid(true),
-                    geteuidResult(0), getsocknameErrno(0), ioctlErrno(0),
-                    ioctlRetriesToSuccess(0), listenErrno(0), mkdirErrno(0),
-                    mmapErrno(0), openErrno(0), opendirErrno(0), pipeErrno(0),
-                    readdirErrno(0), recvErrno(0), recvEof(false),
-                    recvfromErrno(0), recvfromEof(false), recvmmsgErrno(0),
-                    rmdirErrno(0), sendErrno(0), sendReturnCount(-1),
-                    sendmsgErrno(0), sendmsgReturnCount(-1), sendtoErrno(0),
-                    sendtoReturnCount(-1), setsockoptErrno(0), socketErrno(0),
-                    writeErrno(0) {}
+    MockSyscall()
+        : acceptErrno(0),
+          bindErrno(0),
+          chmodErrno(0),
+          closeErrno(0),
+          closeCount(0),
+          closedirErrno(0),
+          connectErrno(0),
+          epollCreateErrno(0),
+          epollCtlErrno(0),
+          epollWaitCount(-1),
+          epollWaitEvents(NULL),
+          epollWaitErrno(0),
+          exitCount(0),
+          fcntlErrno(0),
+          ftruncateErrno(0),
+          futexWaitErrno(0),
+          futexWakeErrno(0),
+          fwriteResult(~0LU),
+          callGeteuid(true),
+          geteuidResult(0),
+          getsocknameErrno(0),
+          ioctlErrno(0),
+          ioctlRetriesToSuccess(0),
+          listenErrno(0),
+          mkdirErrno(0),
+          mmapErrno(0),
+          openErrno(0),
+          opendirErrno(0),
+          pipeErrno(0),
+          readdirErrno(0),
+          recvErrno(0),
+          recvEof(false),
+          recvfromErrno(0),
+          recvfromEof(false),
+          recvmmsgErrno(0),
+          rmdirErrno(0),
+          sendErrno(0),
+          sendReturnCount(-1),
+          sendmsgErrno(0),
+          sendmsgReturnCount(-1),
+          sendtoErrno(0),
+          sendtoReturnCount(-1),
+          setsockoptErrno(0),
+          socketErrno(0),
+          writeErrno(0) {}
 
     int acceptErrno;
-    int accept(int sockfd, sockaddr *addr, socklen_t *addrlen) {
+    int accept(int sockfd, sockaddr* addr, socklen_t* addrlen) {
         if (acceptErrno == 0) {
             return ::accept(sockfd, addr, addrlen);
         }
@@ -61,7 +92,7 @@ class MockSyscall : public Syscall {
     }
 
     int bindErrno;
-    int bind(int sockfd, const sockaddr *addr, socklen_t addrlen) {
+    int bind(int sockfd, const sockaddr* addr, socklen_t addrlen) {
         if (bindErrno == 0) {
             return ::bind(sockfd, addr, addrlen);
         }
@@ -99,8 +130,7 @@ class MockSyscall : public Syscall {
     }
 
     int connectErrno;
-    int connect(int sockfd, const sockaddr *addr,
-                socklen_t addrlen) {
+    int connect(int sockfd, const sockaddr* addr, socklen_t addrlen) {
         if (connectErrno == 0) {
             return ::connect(sockfd, addr, addrlen);
         }
@@ -118,9 +148,9 @@ class MockSyscall : public Syscall {
     }
 
     int epollCtlErrno;
-    int epoll_ctl(int epfd, int op, int fd, epoll_event *event) {
+    int epoll_ctl(int epfd, int op, int fd, epoll_event* event) {
         if (epollCtlErrno == 0) {
-            return ::epoll_ctl( epfd, op, fd, event);
+            return ::epoll_ctl(epfd, op, fd, event);
         }
         errno = epollCtlErrno;
         return -1;
@@ -129,11 +159,10 @@ class MockSyscall : public Syscall {
     int epollWaitCount;
     epoll_event* epollWaitEvents;
     int epollWaitErrno;
-    int epoll_wait(int epfd, epoll_event* events,
-            int maxEvents, int timeout) {
+    int epoll_wait(int epfd, epoll_event* events, int maxEvents, int timeout) {
         if (epollWaitCount >= 0) {
             memcpy(events, epollWaitEvents,
-                   epollWaitCount*sizeof(epoll_event));
+                   epollWaitCount * sizeof(epoll_event));
             int result = epollWaitCount;
             epollWaitCount = -1;
             return result;
@@ -170,10 +199,10 @@ class MockSyscall : public Syscall {
     }
 
     int futexWaitErrno;
-    int futexWait(int *addr, int value) {
+    int futexWait(int* addr, int value) {
         if (futexWaitErrno == 0) {
-            return static_cast<int>(::syscall(SYS_futex, addr, FUTEX_WAIT,
-                    value, NULL, NULL, 0));
+            return static_cast<int>(
+                ::syscall(SYS_futex, addr, FUTEX_WAIT, value, NULL, NULL, 0));
         }
         errno = futexWaitErrno;
         futexWaitErrno = 0;
@@ -181,10 +210,10 @@ class MockSyscall : public Syscall {
     }
 
     int futexWakeErrno;
-    int futexWake(int *addr, int count) {
+    int futexWake(int* addr, int count) {
         if (futexWakeErrno == 0) {
-            return static_cast<int>(::syscall(SYS_futex, addr, FUTEX_WAKE,
-                    count, NULL, NULL, 0));
+            return static_cast<int>(
+                ::syscall(SYS_futex, addr, FUTEX_WAKE, count, NULL, NULL, 0));
         }
         errno = futexWakeErrno;
         futexWakeErrno = 0;
@@ -192,7 +221,7 @@ class MockSyscall : public Syscall {
     }
 
     size_t fwriteResult;
-    size_t fwrite(const void *src, size_t size, size_t count, FILE* f) {
+    size_t fwrite(const void* src, size_t size, size_t count, FILE* f) {
         if (fwriteResult == ~0LU) {
             return ::fwrite(src, size, count, f);
         }
@@ -227,7 +256,6 @@ class MockSyscall : public Syscall {
             errno = ioctlErrno;
             return -1;
         } else if (reqType == SIOCGARP && ioctlRetriesToSuccess > 0) {
-
             // Simulates when kernel ARP cache is busy and not accessible.
             ioctlRetriesToSuccess--;
             struct arpreq* arpReq = reinterpret_cast<struct arpreq*>(request);
@@ -311,7 +339,7 @@ class MockSyscall : public Syscall {
 
     int recvErrno;
     bool recvEof;
-    ssize_t recv(int sockfd, void *buf, size_t len, int flags) {
+    ssize_t recv(int sockfd, void* buf, size_t len, int flags) {
         if (recvEof) {
             return 0;
         }
@@ -324,8 +352,8 @@ class MockSyscall : public Syscall {
 
     int recvfromErrno;
     bool recvfromEof;
-    ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
-                     sockaddr *from, socklen_t* fromLen) {
+    ssize_t recvfrom(int sockfd, void* buf, size_t len, int flags,
+                     sockaddr* from, socklen_t* fromLen) {
         if (recvfromEof) {
             return 0;
         }
@@ -337,15 +365,14 @@ class MockSyscall : public Syscall {
     }
 
     int recvmmsgErrno;
-    ssize_t recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen,
-                     unsigned int flags, struct timespec *timeout) {
+    ssize_t recvmmsg(int sockfd, struct mmsghdr* msgvec, unsigned int vlen,
+                     unsigned int flags, struct timespec* timeout) {
         if (recvmmsgErrno == 0) {
             return ::recvmmsg(sockfd, msgvec, vlen, flags, timeout);
         }
         errno = recvmmsgErrno;
         recvmmsgErrno = 0;
         return -1;
-
     }
 
     int rmdirErrno;
@@ -371,7 +398,7 @@ class MockSyscall : public Syscall {
 
     int sendmsgErrno;
     int sendmsgReturnCount;
-    ssize_t sendmsg(int sockfd, const msghdr *msg, int flags) {
+    ssize_t sendmsg(int sockfd, const msghdr* msg, int flags) {
         if (sendmsgErrno != 0) {
             errno = sendmsgErrno;
             return -1;
@@ -384,8 +411,8 @@ class MockSyscall : public Syscall {
 
     int sendtoErrno;
     int sendtoReturnCount;
-    ssize_t sendto(int socket, const void *buffer, size_t length, int flags,
-           const struct sockaddr *destAddr, socklen_t destLen) {
+    ssize_t sendto(int socket, const void* buffer, size_t length, int flags,
+                   const struct sockaddr* destAddr, socklen_t destLen) {
         if (sendtoErrno != 0) {
             errno = sendtoErrno;
             return -1;
@@ -396,8 +423,8 @@ class MockSyscall : public Syscall {
     }
 
     int setsockoptErrno;
-    int setsockopt(int sockfd, int level, int optname, const void *optval,
-                    socklen_t optlen) {
+    int setsockopt(int sockfd, int level, int optname, const void* optval,
+                   socklen_t optlen) {
         if (setsockoptErrno == 0) {
             return ::setsockopt(sockfd, level, optname, optval, optlen);
         }
@@ -416,7 +443,7 @@ class MockSyscall : public Syscall {
 
     int statErrno;
     int stat(const char* path, struct stat* buf) {
-        if (statErrno == 0){
+        if (statErrno == 0) {
             ::stat(path, buf);
         }
         errno = statErrno;
@@ -442,6 +469,6 @@ class MockSyscall : public Syscall {
     }
 };
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter
 
 #endif  // CORE_ARBITER_MOCK_SYSCALL

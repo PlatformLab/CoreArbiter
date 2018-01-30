@@ -27,7 +27,6 @@
 #include "CoreArbiterCommon.h"
 #include "Syscall.h"
 
-
 namespace CoreArbiter {
 
 /**
@@ -67,9 +66,9 @@ class CoreArbiterClient {
     uint32_t getNumBlockedThreads();
     size_t getNumUnoccupiedCores();
     uint32_t getNumProcessesOnServer();
-    virtual void reset() {} ;
+    virtual void reset() {}
 
-    class ClientException: public std::runtime_error {
+    class ClientException : public std::runtime_error {
       public:
         explicit ClientException(std::string err) : runtime_error(err) {}
     };
@@ -152,6 +151,6 @@ class CoreArbiterClient {
     static bool testingSkipConnectionSetup;
 };
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter
 
-#endif // CORE_ARBITER_CLIENT_H_
+#endif  // CORE_ARBITER_CLIENT_H_

@@ -14,8 +14,8 @@
  */
 
 #include <stdio.h>
-#include <thread>
 #include <atomic>
+#include <thread>
 
 #include "CoreArbiterClient.h"
 #include "Logger.h"
@@ -26,18 +26,21 @@ using CoreArbiter::Logger;
 #define NUM_TRIALS 100
 
 /**
-  * This thread will get unblocked when a core is allocated, and will block
-  * itself again when the number of cores is decreased.
-  */
-void coreExec(CoreArbiterClient* client) {
-    client->setRequestedCores({1,0,0,0,0,0,0,0});
+ * This thread will get unblocked when a core is allocated, and will block
+ * itself again when the number of cores is decreased.
+ */
+void
+coreExec(CoreArbiterClient* client) {
+    client->setRequestedCores({1, 0, 0, 0, 0, 0, 0, 0});
     client->blockUntilCoreAvailable();
-    client->setRequestedCores({0,0,0,0,0,0,0,0});
-    while (!client->mustReleaseCore());
+    client->setRequestedCores({0, 0, 0, 0, 0, 0, 0, 0});
+    while (!client->mustReleaseCore())
+        ;
     client->unregisterThread();
 }
 
-int main(){
+int
+main() {
     Logger::setLogLevel(CoreArbiter::DEBUG);
     CoreArbiterClient* client =
         CoreArbiterClient::getInstance("/tmp/CoreArbiter/testsocket");

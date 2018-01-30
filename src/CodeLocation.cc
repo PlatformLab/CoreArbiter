@@ -13,9 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "CodeLocation.h"
 #include <pcrecpp.h>
 #include <cassert>
-#include "CodeLocation.h"
 
 namespace CoreArbiter {
 
@@ -27,34 +27,30 @@ namespace {
  * directory of the RAMCloud repo.
  */
 int
-length__FILE__Prefix()
-{
+length__FILE__Prefix() {
     const char* start = __FILE__;
     const char* match = strstr(__FILE__, "src/CodeLocation.cc");
     assert(match != NULL);
     return downCast<int>(match - start);
 }
 
-} // anonymous namespace
-
+}  // anonymous namespace
 
 /**
  * Return the base name of the file (i.e., only the last component of the
  * file name, omitting any preceding directories).
  */
 const char*
-CodeLocation::baseFileName() const
-{
+CodeLocation::baseFileName() const {
     const char* lastSlash = strrchr(file, '/');
     if (lastSlash == NULL) {
         return file;
     }
-    return lastSlash+1;
+    return lastSlash + 1;
 }
 
 string
-CodeLocation::relativeFile() const
-{
+CodeLocation::relativeFile() const {
     static int lengthFilePrefix = length__FILE__Prefix();
     // Remove the prefix only if it matches that of __FILE__. This check is
     // needed in case someone compiles different files using different paths.
@@ -73,14 +69,12 @@ CodeLocation::relativeFile() const
  * longer use it in log messages because it wastes so much time.
  */
 string
-CodeLocation::qualifiedFunction() const
-{
+CodeLocation::qualifiedFunction() const {
     string ret;
-    const string pattern(
-        format("\\s(?:RAMCloud::)?(\\S*\\b%s)\\(", function));
+    const string pattern(format("\\s(?:RAMCloud::)?(\\S*\\b%s)\\(", function));
     if (pcrecpp::RE(pattern).PartialMatch(prettyFunction, &ret))
         return ret;
-    else // shouldn't happen
+    else  // shouldn't happen
         return function;
 }
 
@@ -88,8 +82,7 @@ CodeLocation::qualifiedFunction() const
 
 /// A safe version of sprintf.
 std::string
-format(const char* format, ...)
-{
+format(const char* format, ...) {
     va_list ap;
     va_start(ap, format);
     std::string s = vformat(format, ap);
@@ -99,8 +92,7 @@ format(const char* format, ...)
 
 /// A safe version of vprintf.
 string
-vformat(const char* format, va_list ap)
-{
+vformat(const char* format, va_list ap) {
     string s;
 
     // We're not really sure how big of a buffer will be necessary.
@@ -112,7 +104,7 @@ vformat(const char* format, va_list ap)
         va_list aq;
         __va_copy(aq, ap);
         int r = vsnprintf(buf, bufSize, format, aq);
-        assert(r >= 0); // old glibc versions returned -1
+        assert(r >= 0);  // old glibc versions returned -1
         if (r < bufSize) {
             s = buf;
             break;
@@ -123,4 +115,4 @@ vformat(const char* format, va_list ap)
     return s;
 }
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter
