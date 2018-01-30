@@ -755,8 +755,9 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
         uint64_t time;
         ssize_t ret = read(timerFd, &time, sizeof(uint64_t));
         if (ret == -1) {
-            LOG(ERROR, "Error reading time: %s", strerror(errno));
-            return;
+            LOG(ERROR, "Error reading number of expirations of the timer: %s",
+                strerror(errno));
+            exit(1);
         }
     }
 
