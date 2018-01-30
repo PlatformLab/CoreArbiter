@@ -28,12 +28,11 @@ std::mutex Logger::mutex;
  * Friendly names for each #LogLevel value.
  * Keep this in sync with the LogLevel enum.
  */
-static const char* logLevelNames[] = {"DEBUG", "NOTICE", "WARNING",
-    "ERROR", "SILENT"};
+static const char* logLevelNames[] = {"DEBUG", "NOTICE", "WARNING", "ERROR",
+                                      "SILENT"};
 
-void Logger::log(const CodeLocation& where, LogLevel level,
-        const char* fmt, ...)
-{
+void
+Logger::log(const CodeLocation& where, LogLevel level, const char* fmt, ...) {
     if (level < displayMinLevel) {
         return;
     }
@@ -47,10 +46,9 @@ void Logger::log(const CodeLocation& where, LogLevel level,
     uint64_t time = Cycles::rdtsc();
 
     // Add a header including rdtsc time and location in the file.
-    actual = snprintf(buffer+charsWritten, spaceLeft,
-            "%.10lu %s:%d in %s %s: ",
-            time, where.baseFileName(), where.line,
-            where.function, logLevelNames[level]);
+    actual = snprintf(buffer + charsWritten, spaceLeft,
+                      "%.10lu %s:%d in %s %s: ", time, where.baseFileName(),
+                      where.line, where.function, logLevelNames[level]);
     charsWritten += actual;
     spaceLeft -= actual;
 
@@ -65,4 +63,4 @@ void Logger::log(const CodeLocation& where, LogLevel level,
     fflush(errorStream);
 }
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter

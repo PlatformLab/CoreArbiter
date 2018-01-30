@@ -16,14 +16,14 @@
 #ifndef CORE_ARBITER_CODELOCATION_H
 #define CORE_ARBITER_CODELOCATION_H
 
+#include <assert.h>
 #include <stdarg.h>
 #include <string>
 
 namespace CoreArbiter {
 
 // Utility functions used.
-std::string
-format(const char* format, ...);
+std::string format(const char* format, ...);
 
 /**
  * Describes the location of a line of code.
@@ -31,20 +31,15 @@ format(const char* format, ...);
  */
 struct CodeLocation {
     /// Called by #HERE only.
-    CodeLocation(const char* file,
-                 const uint32_t line,
-                 const char* function,
+    CodeLocation(const char* file, const uint32_t line, const char* function,
                  const char* prettyFunction)
-        : file(file)
-        , line(line)
-        , function(function)
-        , prettyFunction(prettyFunction)
-    {}
+        : file(file),
+          line(line),
+          function(function),
+          prettyFunction(prettyFunction) {}
     std::string str() const {
-        return format("%s at %s:%d",
-                      qualifiedFunction().c_str(),
-                      relativeFile().c_str(),
-                      line);
+        return format("%s at %s:%d", qualifiedFunction().c_str(),
+                      relativeFile().c_str(), line);
     }
     const char* baseFileName() const;
     std::string relativeFile() const;
@@ -70,14 +65,13 @@ struct CodeLocation {
  * Cast one size of int down to another one.
  * Asserts that no precision is lost at runtime.
  */
-template<typename Small, typename Large>
+template <typename Small, typename Large>
 Small
-downCast(const Large& large)
-{
+downCast(const Large& large) {
     Small small = static_cast<Small>(large);
     // The following comparison (rather than "large==small") allows
     // this method to convert between signed and unsigned values.
-    assert(large-small == 0);
+    assert(large - small == 0);
     return small;
 }
 
@@ -86,6 +80,6 @@ std::string format(const char* format, ...)
 std::string vformat(const char* format, va_list ap)
     __attribute__((format(printf, 1, 0)));
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter
 
 #endif  // RAMCLOUD_CODELOCATION_H

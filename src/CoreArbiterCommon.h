@@ -27,7 +27,7 @@
 #define THREAD_BLOCK 1
 #define CORE_REQUEST 2
 
-namespace CoreArbiter{
+namespace CoreArbiter {
 
 /**
  * Statistics kept per process. The server creates a file with this information
@@ -60,12 +60,11 @@ struct ProcessStats {
     std::atomic<uint32_t> numOwnedCores;
 
     ProcessStats()
-        : coreReleaseRequestCount(0)
-        , preemptedCount(0)
-        , unpreemptedCount(0)
-        , numBlockedThreads(0)
-        , numOwnedCores(0)
-    {}
+        : coreReleaseRequestCount(0),
+          preemptedCount(0),
+          unpreemptedCount(0),
+          numBlockedThreads(0),
+          numOwnedCores(0) {}
 };
 
 /**
@@ -81,12 +80,9 @@ struct GlobalStats {
     // The total number of processes currently connected to a CoreArbiterServer
     std::atomic<uint32_t> numProcesses;
 
-    GlobalStats()
-        : numUnoccupiedCores(0)
-        , numProcesses(0)
-    {}
+    GlobalStats() : numUnoccupiedCores(0), numProcesses(0) {}
 };
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter
 
-#endif // CORE_ARBITER_COMMON_H
+#endif  // CORE_ARBITER_COMMON_H

@@ -22,9 +22,10 @@
 
 #include "CodeLocation.h"
 
-#define LOG(level, format, ...)  do { \
-    Logger::log(HERE, level, format, ##__VA_ARGS__); \
-} while (0)
+#define LOG(level, format, ...)                          \
+    do {                                                 \
+        Logger::log(HERE, level, format, ##__VA_ARGS__); \
+    } while (0)
 
 namespace CoreArbiter {
 
@@ -35,21 +36,16 @@ enum LogLevel { DEBUG, NOTICE, WARNING, ERROR, SILENT };
 
 class Logger {
   public:
-
     /**
      * Used to set the minimum severity to print out.
      */
-    static void setLogLevel(LogLevel level) {
-        displayMinLevel = level;
-    }
+    static void setLogLevel(LogLevel level) { displayMinLevel = level; }
 
     /**
-      * Change the target of the error stream, allowing redirection to an
-      * application's log.
-      */
-    static void setErrorStream(FILE* stream) {
-        errorStream = stream;
-    }
+     * Change the target of the error stream, allowing redirection to an
+     * application's log.
+     */
+    static void setErrorStream(FILE* stream) { errorStream = stream; }
 
     /**
      * Print a message to the console at a given severity level. Accepts
@@ -60,9 +56,8 @@ class Logger {
      * \param fmt
      *     A format string, followed by its arguments.
      */
-    static void log(const CodeLocation& where, LogLevel level,
-            const char* fmt, ...)
-        __attribute__((format(printf, 3, 4)));
+    static void log(const CodeLocation& where, LogLevel level, const char* fmt,
+                    ...) __attribute__((format(printf, 3, 4)));
 
   private:
     // The minimum severity level to print.
@@ -76,6 +71,6 @@ class Logger {
     static FILE* errorStream;
 };
 
-} //namespace CoreArbiter
+}  // namespace CoreArbiter
 
 #endif

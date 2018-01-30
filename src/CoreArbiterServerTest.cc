@@ -16,16 +16,15 @@
 #include <thread>
 #define private public
 
-#include "gtest/gtest.h"
-#include "MockSyscall.h"
 #include "CoreArbiterServer.h"
 #include "Logger.h"
+#include "MockSyscall.h"
+#include "gtest/gtest.h"
 
 namespace CoreArbiter {
 
 class CoreArbiterServerTest : public ::testing::Test {
   public:
-
     MockSyscall* sys;
     std::string socketPath;
     std::string memPath;
@@ -38,9 +37,8 @@ class CoreArbiterServerTest : public ::testing::Test {
     typedef CoreArbiterServer::ThreadState ThreadState;
 
     CoreArbiterServerTest()
-        : socketPath("/tmp/CoreArbiter/testsocket")
-        , memPath("/tmp/CoreArbiter/testmem")
-    {
+        : socketPath("/tmp/CoreArbiter/testsocket"),
+          memPath("/tmp/CoreArbiter/testmem") {
         Logger::setLogLevel(ERROR);
 
         sys = new MockSyscall();
@@ -52,8 +50,7 @@ class CoreArbiterServerTest : public ::testing::Test {
         serverSocket = fd[1];
     }
 
-    ~CoreArbiterServerTest()
-    {
+    ~CoreArbiterServerTest() {
         close(clientSocket);
         close(serverSocket);
         delete sys;
@@ -92,8 +89,8 @@ class CoreArbiterServerTest : public ::testing::Test {
 
     void makeUnmanagedCoresManaged(CoreArbiterServer& server) {
         server.managedCores.insert(server.managedCores.end(),
-                                     server.unmanagedCores.begin(),
-                                     server.unmanagedCores.end());
+                                   server.unmanagedCores.begin(),
+                                   server.unmanagedCores.end());
         server.unmanagedCores.erase(server.unmanagedCores.begin());
     }
 };
@@ -101,65 +98,56 @@ class CoreArbiterServerTest : public ::testing::Test {
 TEST_F(CoreArbiterServerTest, constructor_notRoot) {
     sys->callGeteuid = false;
     sys->geteuidResult = 1;
-    ASSERT_DEATH(
-        CoreArbiterServer(socketPath, memPath, {}),
-        "The core arbiter server must be run as root");
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
+                 "The core arbiter server must be run as root");
     sys->callGeteuid = true;
 }
 
 TEST_F(CoreArbiterServerTest, constructor_socketError) {
     sys->socketErrno = EAFNOSUPPORT;
-    ASSERT_DEATH(
-        CoreArbiterServer(socketPath, memPath, {}),
-        "Error creating listen socket:.*");
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
+                 "Error creating listen socket:.*");
     sys->socketErrno = 0;
 }
 
 TEST_F(CoreArbiterServerTest, constructor_bindError) {
     sys->bindErrno = EINVAL;
-    ASSERT_DEATH(
-        CoreArbiterServer(socketPath, memPath, {}),
-        "Error binding listen socket:.*");
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
+                 "Error binding listen socket:.*");
     sys->bindErrno = 0;
 }
 
 TEST_F(CoreArbiterServerTest, constructor_listenError) {
     sys->listenErrno = EBADF;
-    ASSERT_DEATH(
-        CoreArbiterServer(socketPath, memPath, {}),
-        "Error listening:.*");
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
+                 "Error listening:.*");
     sys->listenErrno = 0;
 }
 
 TEST_F(CoreArbiterServerTest, constructor_chmodError) {
     sys->chmodErrno = EACCES;
-    ASSERT_DEATH(
-        CoreArbiterServer(socketPath, memPath, {}),
-        "Error on chmod for.*");
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
+                 "Error on chmod for.*");
     sys->chmodErrno = 0;
 }
 
 TEST_F(CoreArbiterServerTest, constructor_epollCreateError) {
     sys->epollCreateErrno = EINVAL;
-    ASSERT_DEATH(
-        CoreArbiterServer(socketPath, memPath, {}),
-        "Error on epoll_create:.*");
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
+                 "Error on epoll_create:.*");
     sys->epollCreateErrno = 0;
 }
 
 TEST_F(CoreArbiterServerTest, constructor_epollCtlError) {
     sys->epollCtlErrno = EBADF;
-    ASSERT_DEATH(
-        CoreArbiterServer(socketPath, memPath, {}),
-        "Error adding listenSocket .* to epoll:.*");
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
+                 "Error adding listenSocket .* to epoll:.*");
     sys->epollCtlErrno = 0;
 }
 
 TEST_F(CoreArbiterServerTest, endArbitration) {
-    CoreArbiterServer server(socketPath, memPath, {1,2}, false);
-    std::thread arbitrationThread([&] {
-        server.startArbitration();
-    });
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+    std::thread arbitrationThread([&] { server.startArbitration(); });
     server.endArbitration();
     arbitrationThread.join();
 }
@@ -406,8 +394,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
         ProcessInfo* process = createProcess(server, i, new ProcessStats());
         processes.push_back(process);
         for (int j = 0; j < 2; j++) {
-            createThread(server, j, process, j,
-                         CoreArbiterServer::BLOCKED);
+            createThread(server, j, process, j, CoreArbiterServer::BLOCKED);
         }
     }
     processes[0]->desiredCorePriorities[7] = 2;
@@ -442,8 +429,8 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     server.managedThreads.erase(removedThread);
     server.managedCores[0]->managedThread = NULL;
     server.distributeCores();
-    ProcessInfo* otherProcess = removedThread->process == processes[0] ?
-        processes[1] : processes[0];
+    ProcessInfo* otherProcess =
+        removedThread->process == processes[0] ? processes[1] : processes[0];
     ASSERT_EQ(server.managedThreads.size(), 2u);
     ASSERT_EQ(otherProcess->stats->numOwnedCores, 2u);
 
@@ -470,8 +457,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
         ProcessInfo* process = createProcess(server, i, new ProcessStats());
         processes.push_back(process);
         for (int j = 0; j < 4; j++) {
-            createThread(server, j, process, j,
-                         CoreArbiterServer::BLOCKED);
+            createThread(server, j, process, j, CoreArbiterServer::BLOCKED);
         }
     }
     ProcessInfo* highPriorityProcess = processes[0];
@@ -571,14 +557,14 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
     makeUnmanagedCoresManaged(server);
-    server.preemptionTimeout = 1; // For faster testing
+    server.preemptionTimeout = 1;  // For faster testing
 
     ProcessStats processStats;
     CoreInfo* core = server.managedCores[0];
 
     ProcessInfo* process = createProcess(server, 1, &processStats);
-    ThreadInfo* thread = createThread(
-        server, 1, process, 1, CoreArbiterServer::RUNNING_MANAGED, core);
+    ThreadInfo* thread = createThread(server, 1, process, 1,
+                                      CoreArbiterServer::RUNNING_MANAGED, core);
 
     // If the client is cooperative, nothing should happen
     process->coreReleaseCount = 1;
@@ -611,8 +597,8 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_invalidateOldTimeout) {
     CoreInfo* core = server.managedCores[0];
 
     ProcessInfo* process = createProcess(server, 1, &processStats);
-    ThreadInfo* thread = createThread(
-        server, 1, process, 1, CoreArbiterServer::RUNNING_MANAGED, core);
+    ThreadInfo* thread = createThread(server, 1, process, 1,
+                                      CoreArbiterServer::RUNNING_MANAGED, core);
 
     // Simulate a timer going off for a process who previously released a core
     process->coreReleaseCount = 1;
@@ -647,12 +633,12 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
         server, 1, process, 1, CoreArbiterServer::RUNNING_MANAGED, core);
     ThreadInfo* preemptedThread = createThread(
         server, 2, process, 2, CoreArbiterServer::RUNNING_PREEMPTED);
-    ThreadInfo* blockedThread = createThread(
-        server, 3, process, 3, CoreArbiterServer::BLOCKED);
+    ThreadInfo* blockedThread =
+        createThread(server, 3, process, 3, CoreArbiterServer::BLOCKED);
 
     server.cleanupConnection(managedThread->socket);
-    ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_MANAGED]
-                         .empty());
+    ASSERT_TRUE(
+        process->threadStateToSet[CoreArbiterServer::RUNNING_MANAGED].empty());
     ASSERT_EQ(server.threadSocketToInfo.find(1),
               server.threadSocketToInfo.end());
     ASSERT_EQ(server.managedThreads.find(managedThread),
@@ -665,7 +651,7 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
 
     server.cleanupConnection(preemptedThread->socket);
     ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_PREEMPTED]
-                         .empty());
+                    .empty());
     ASSERT_EQ(server.threadSocketToInfo.find(2),
               server.threadSocketToInfo.end());
     ASSERT_EQ(process->stats->numOwnedCores, 0u);
@@ -683,4 +669,4 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
     sys->closeErrno = 0;
 }
-} // namespace CoreArbiter
+}  // namespace CoreArbiter

@@ -16,17 +16,16 @@
 #define private public
 #define protected public
 
-#include "gtest/gtest.h"
-#include "MockSyscall.h"
-#include "CoreArbiterClient.h"
 #include "ArbiterClientShim.h"
+#include "CoreArbiterClient.h"
 #include "Logger.h"
+#include "MockSyscall.h"
+#include "gtest/gtest.h"
 
 namespace CoreArbiter {
 
 class CoreArbiterClientTest : public ::testing::Test {
   public:
-
     MockSyscall* sys;
     std::string socketPath;
     std::string memPath;
@@ -39,12 +38,11 @@ class CoreArbiterClientTest : public ::testing::Test {
     Arachne::ArbiterClientShim shim_client;
 
     CoreArbiterClientTest()
-        : socketPath("/tmp/CoreArbiter/testsocket")
-        , memPath("/tmp/CoreArbiter/testsocket")
-        , processStats()
-        , globalStats()
-        , client("")
-    {
+        : socketPath("/tmp/CoreArbiter/testsocket"),
+          memPath("/tmp/CoreArbiter/testsocket"),
+          processStats(),
+          globalStats(),
+          client("") {
         Logger::setLogLevel(ERROR);
 
         sys = new MockSyscall();
@@ -56,16 +54,12 @@ class CoreArbiterClientTest : public ::testing::Test {
         serverSocket = fd[1];
     }
 
-    ~CoreArbiterClientTest()
-    {
-        delete sys;
-    }
+    ~CoreArbiterClientTest() { delete sys; }
 
     void connectClient() {
         client.serverSocket = clientSocket;
         client.processStats = &processStats;
         client.globalStats = &globalStats;
-
     }
 
     void disconnectClient() {
@@ -84,7 +78,7 @@ TEST_F(CoreArbiterClientTest, setRequestedCores_invalidRequest) {
                  CoreArbiterClient::ClientException);
 
     // Core request vector too large
-    ASSERT_THROW(client.setRequestedCores({0,0,0,0,0,0,0,0,0}),
+    ASSERT_THROW(client.setRequestedCores({0, 0, 0, 0, 0, 0, 0, 0, 0}),
                  CoreArbiterClient::ClientException);
 }
 
@@ -95,7 +89,7 @@ TEST_F(CoreArbiterClientTest, setRequestedCores_establishConnection) {
     ASSERT_EQ(client.serverSocket, -1);
     // This isn't going to work because the client's socket is set to an
     // invalid file descriptor for testing
-    ASSERT_THROW(client.setRequestedCores({0,0,0,0,0,0,0,0}),
+    ASSERT_THROW(client.setRequestedCores({0, 0, 0, 0, 0, 0, 0, 0}),
                  CoreArbiterClient::ClientException);
     ASSERT_EQ(client.serverSocket, 999);
 }
@@ -184,17 +178,13 @@ TEST_F(CoreArbiterClientTest, getNumOwnedCores) {
 }
 
 TEST_F(CoreArbiterClientTest, setRequestedCores_shim) {
-
     shim_client.setRequestedCores({0, 1, 2, 3, 4, 5, 6, 7});
-    ASSERT_EQ(shim_client.currentRequestedCores, (unsigned) 28);
-
+    ASSERT_EQ(shim_client.currentRequestedCores, (unsigned)28);
 }
 
 TEST_F(CoreArbiterClientTest, mustReleaseCore_shim) {
-
     shim_client.currentCores = 26;
     ASSERT_EQ(shim_client.mustReleaseCore(), true);
-
 }
 
-} // namespace CoreArbiter
+}  // namespace CoreArbiter

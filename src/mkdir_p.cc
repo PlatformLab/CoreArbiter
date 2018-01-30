@@ -13,27 +13,27 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <string.h>
-#include <limits.h>     /* PATH_MAX */
-#include <sys/stat.h>   /* mkdir(2) */
 #include <errno.h>
+#include <limits.h> /* PATH_MAX */
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h> /* mkdir(2) */
 
 /**
-  * This function ensures that a directory exists, and comes from the github.
-  * https://gist.github.com/JonathonReinhart/8c0d90191c38af2dcadb102c4e202950
-  */
-int mkdir_p(const char *path, mode_t mode)
-{
+ * This function ensures that a directory exists, and comes from the github.
+ * https://gist.github.com/JonathonReinhart/8c0d90191c38af2dcadb102c4e202950
+ */
+int
+mkdir_p(const char* path, mode_t mode) {
     // Adapted from http://stackoverflow.com/a/2336245/119527
     const size_t len = strlen(path);
     char _path[PATH_MAX];
-    char *p;
+    char* p;
 
     errno = 0;
 
     /* Copy string so its mutable */
-    if (len > sizeof(_path)-1) {
+    if (len > sizeof(_path) - 1) {
         errno = ENAMETOOLONG;
         return -1;
     }
@@ -62,11 +62,12 @@ int mkdir_p(const char *path, mode_t mode)
 }
 
 /**
-  * Given a path, ensure that the immediate parent of the file specified by the
-  * path exists.  If the path ends in a trailing `/`, it is assumed that we
-  * want to ensure this directory exists.
-  */
-int ensureParents(const char *path, mode_t mode = S_IRWXU) {
+ * Given a path, ensure that the immediate parent of the file specified by the
+ * path exists.  If the path ends in a trailing `/`, it is assumed that we
+ * want to ensure this directory exists.
+ */
+int
+ensureParents(const char* path, mode_t mode = S_IRWXU) {
     char* dup = strdup(path);
     const size_t len = strlen(dup);
     for (size_t p = len; p > 0; p--) {
