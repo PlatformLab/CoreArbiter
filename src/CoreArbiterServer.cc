@@ -753,7 +753,12 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd)
 {
     if (!testingSkipSocketCommunication) {
         uint64_t time;
-        read(timerFd, &time, sizeof(uint64_t));
+        ssize_t ret = read(timerFd, &time, sizeof(uint64_t));
+        if (ret == -1) {
+            LOG(ERROR, "Error reading number of expirations of the timer: %s",
+                strerror(errno));
+            exit(1);
+        }
     }
 
     struct TimerInfo* timer = &timerFdToInfo[timerFd];
