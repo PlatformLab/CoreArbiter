@@ -97,7 +97,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
 
     // Try to acquire the advisory lock.
     // If another CoreAriber server is running, then exit.
-    advisoryLockFd = sys->open(advisoryLockPath.c_str(), O_CREAT | O_RDWR);
+    advisoryLockFd =
+        sys->open(advisoryLockPath.c_str(), O_CREAT | O_RDWR | O_TRUNC);
     if (advisoryLockFd < 0) {
         LOG(ERROR, "Error opening advisory lock file: %s", strerror(errno));
         exit(-1);
@@ -365,6 +366,11 @@ CoreArbiterServer::~CoreArbiterServer() {
  */
 void
 CoreArbiterServer::startArbitration() {
+    char started = 's';
+    ssize_t ret = sys->write(advisoryLockFd, &started, sizeof(char));
+    if (ret < 0) {
+        LOG(ERROR, "Error writing to advisory file: %s", strerror(errno));
+    }
     while (handleEvents()) {
     }
 }
@@ -379,6 +385,9 @@ CoreArbiterServer::endArbitration() {
     ssize_t ret = sys->write(terminationFd, &terminate, 8);
     if (ret < 0) {
         LOG(ERROR, "Error writing to terminationFd: %s", strerror(errno));
+    }
+    if (ftruncate(advisoryLockFd, 0) == -1) {
+        LOG(ERROR, "Error truncating advisory lock file: %s", strerror(errno));
     }
 }
 

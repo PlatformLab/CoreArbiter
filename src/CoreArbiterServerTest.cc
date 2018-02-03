@@ -152,12 +152,6 @@ TEST_F(CoreArbiterServerTest, endArbitration) {
     arbitrationThread.join();
 }
 
-TEST_F(CoreArbiterServerTest, advisoryLock) {
-    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
-    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {1, 2}, false),
-                 "Error acquiring advisory lock:.*");
-}
-
 TEST_F(CoreArbiterServerTest, defaultCores) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
 
@@ -674,5 +668,44 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     CoreArbiterServer::testingSkipCoreDistribution = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
     sys->closeErrno = 0;
+}
+
+TEST_F(CoreArbiterServerTest, advisoryLock_multiServer) {
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {1, 2}, false),
+                 "Error acquiring advisory lock:.*");
+}
+
+TEST_F(CoreArbiterServerTest, advisoryLock_startStatus) {
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+    std::string advisoryPath = "/tmp/coreArbiterAdvisoryLock";
+    int readFd;
+    ssize_t ret;
+    char chr;
+
+    readFd = ::open(advisoryPath.c_str(), O_RDONLY);
+    ASSERT_GE(readFd, 0);
+    ret = ::read(readFd, &chr, 1);
+    ASSERT_EQ(ret, 0);
+
+    std::thread arbitrationThread([&] { server.startArbitration(); });
+
+    // Wait at most 1 sec
+    for (int i = 0; i < 1000; ++i) {
+        if ((ret = ::read(readFd, &chr, 1)) > 0) {
+            break;
+        } else {
+            ::usleep(1000);
+        }
+    }
+    ASSERT_EQ(ret, 1);
+    ASSERT_EQ(chr, 's');
+
+    server.endArbitration();
+    arbitrationThread.join();
+    ::lseek(readFd, 0, SEEK_SET);
+    ret = ::read(readFd, &chr, 1);
+    ASSERT_EQ(ret, 0);
+    ::close(readFd);
 }
 }  // namespace CoreArbiter
