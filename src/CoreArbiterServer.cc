@@ -97,7 +97,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
 
     // Try to acquire the advisory lock.
     // If another CoreAriber server is running, then exit.
-    advisoryLockFd = sys->open(advisoryLockPath.c_str(), O_CREAT | O_RDWR);
+    advisoryLockFd = sys->open(advisoryLockPath.c_str(),
+                               O_CREAT | O_RDWR | O_TRUNC, S_IRWXU);
     if (advisoryLockFd < 0) {
         LOG(ERROR, "Error opening advisory lock file: %s", strerror(errno));
         exit(-1);

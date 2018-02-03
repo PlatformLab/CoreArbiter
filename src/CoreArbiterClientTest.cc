@@ -20,6 +20,9 @@
 #include "CoreArbiterClient.h"
 #include "Logger.h"
 #include "MockSyscall.h"
+
+#undef private
+#undef protected
 #include "gtest/gtest.h"
 
 namespace CoreArbiter {

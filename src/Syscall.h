@@ -181,6 +181,10 @@ class Syscall {
     virtual ssize_t write(int fd, const void* buf, size_t count) {
         return ::write(fd, buf, count);
     }
+    virtual ssize_t read(int fd, void* buf, size_t count) {
+        return ::read(fd, buf, count);
+    }
+
     virtual int flock(int fd, int operation) { return ::flock(fd, operation); }
 };
 

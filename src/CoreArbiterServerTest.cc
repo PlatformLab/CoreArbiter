@@ -19,6 +19,8 @@
 #include "CoreArbiterServer.h"
 #include "Logger.h"
 #include "MockSyscall.h"
+
+#undef private
 #include "gtest/gtest.h"
 
 namespace CoreArbiter {
@@ -150,12 +152,6 @@ TEST_F(CoreArbiterServerTest, endArbitration) {
     std::thread arbitrationThread([&] { server.startArbitration(); });
     server.endArbitration();
     arbitrationThread.join();
-}
-
-TEST_F(CoreArbiterServerTest, advisoryLock) {
-    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
-    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {1, 2}, false),
-                 "Error acquiring advisory lock:.*");
 }
 
 TEST_F(CoreArbiterServerTest, defaultCores) {
@@ -674,5 +670,11 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     CoreArbiterServer::testingSkipCoreDistribution = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
     sys->closeErrno = 0;
+}
+
+TEST_F(CoreArbiterServerTest, advisoryLock_multiServer) {
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {1, 2}, false),
+                 "Error acquiring advisory lock:.*");
 }
 }  // namespace CoreArbiter
