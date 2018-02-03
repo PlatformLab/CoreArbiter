@@ -82,6 +82,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
       sharedMemPathPrefix(sharedMemPathPrefix),
       globalSharedMemPath(sharedMemPathPrefix + "Global"),
       globalSharedMemFd(-1),
+      advisoryLockPath("/tmp/coreArbiterAdvisoryLock"),
+      advisoryLockFd(-1),
       epollFd(-1),
       preemptionTimeout(RELEASE_TIMEOUT_MS),
       alwaysUnmanagedString(""),
@@ -90,6 +92,22 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
       terminationFd(eventfd(0, 0)) {
     if (sys->geteuid()) {
         LOG(ERROR, "The core arbiter server must be run as root");
+        exit(-1);
+    }
+
+    // Try to acquire the advisory lock.
+    // If another CoreAriber server is running, then exit.
+    advisoryLockFd = sys->open(advisoryLockPath.c_str(), O_CREAT | O_RDWR);
+    if (advisoryLockFd < 0) {
+        LOG(ERROR, "Error opening advisory lock file: %s", strerror(errno));
+        exit(-1);
+    }
+
+    if (sys->flock(advisoryLockFd, LOCK_EX | LOCK_NB) == -1) {
+        LOG(ERROR,
+            "Error acquiring advisory lock: %s "
+            "(Another CoreAriber server running?)",
+            strerror(errno));
         exit(-1);
     }
 
@@ -334,6 +352,11 @@ CoreArbiterServer::~CoreArbiterServer() {
 
     if (mostRecentInstance == this)
         mostRecentInstance = NULL;
+
+    if (sys->flock(advisoryLockFd, LOCK_UN | LOCK_NB) == -1) {
+        LOG(ERROR, "Error releasing advisory lock: %s ", strerror(errno));
+        exit(-1);
+    }
 }
 
 /**

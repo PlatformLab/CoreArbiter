@@ -266,6 +266,13 @@ class CoreArbiterServer {
     // information (see the GlobalStats struct below).
     int globalSharedMemFd;
 
+    // The path to the advisory lock file, preventing multi
+    // coreArbiterServer instances
+    std::string advisoryLockPath;
+
+    // The file descriptor for the advisory lock file
+    int advisoryLockFd;
+
     // Pointer to a struct in shared memory that contains global information
     // about the state of all processes connected to this server.
     struct GlobalStats* stats;

@@ -69,7 +69,7 @@ TEST_LIBS=-Lobj/ -lCoreArbiter $(OBJECT_DIR)/libgtest.a
 INCLUDE+=-I${GTEST_DIR}/include
 
 test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest
-	sudo $(OBJECT_DIR)/CoreArbiterServerTest
+	$(OBJECT_DIR)/CoreArbiterServerTest
 	$(OBJECT_DIR)/CoreArbiterClientTest
 
 $(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a

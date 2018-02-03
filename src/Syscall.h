@@ -21,6 +21,7 @@
 #include <linux/futex.h>
 #include <netinet/in.h>
 #include <sys/epoll.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -180,6 +181,7 @@ class Syscall {
     virtual ssize_t write(int fd, const void* buf, size_t count) {
         return ::write(fd, buf, count);
     }
+    virtual int flock(int fd, int operation) { return ::flock(fd, operation); }
 };
 
 /**

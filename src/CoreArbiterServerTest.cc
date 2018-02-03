@@ -152,6 +152,12 @@ TEST_F(CoreArbiterServerTest, endArbitration) {
     arbitrationThread.join();
 }
 
+TEST_F(CoreArbiterServerTest, advisoryLock) {
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {1, 2}, false),
+                 "Error acquiring advisory lock:.*");
+}
+
 TEST_F(CoreArbiterServerTest, defaultCores) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
 
