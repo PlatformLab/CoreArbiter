@@ -369,6 +369,7 @@ CoreArbiterClient::createNewServerConnection() {
         0) {
         std::string err = "Error connecting: " + std::string(strerror(errno));
         LOG(ERROR, "%s", err.c_str());
+        serverSocket = -1;  // Set serverSocket back to -1 if connection failed
         throw ClientException(err);
     }
 
