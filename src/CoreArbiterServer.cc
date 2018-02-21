@@ -235,10 +235,12 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     sys->unlink(addr.sun_path);
 
     if (sys->bind(listenSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        LOG(ERROR, "Error binding listen socket: %s", strerror(errno));
+        LOG(ERROR, "Error binding listen socket %s: %s", addr.sun_path,
+            strerror(errno));
         sys->close(listenSocket);
         if (remove(socketPath.c_str()) != 0) {
-            LOG(ERROR, "Error deleting socket file: %s", strerror(errno));
+            LOG(ERROR, "Error deleting socket file %s: %s", socketPath.c_str(),
+                strerror(errno));
         }
         exit(-1);
     }

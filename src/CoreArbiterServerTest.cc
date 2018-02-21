@@ -114,8 +114,10 @@ TEST_F(CoreArbiterServerTest, constructor_socketError) {
 
 TEST_F(CoreArbiterServerTest, constructor_bindError) {
     sys->bindErrno = EINVAL;
+    std::string expectedError =
+        "Error binding listen socket " + socketPath + ":.*";
     ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {}),
-                 "Error binding listen socket:.*");
+                 expectedError.c_str());
     sys->bindErrno = 0;
 }
 
