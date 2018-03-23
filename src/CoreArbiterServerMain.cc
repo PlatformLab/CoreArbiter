@@ -21,8 +21,8 @@
 using CoreArbiter::CoreArbiterServer;
 using CoreArbiter::Logger;
 
-std::string socketPath = "/tmp/CoreArbiter/testsocket";
-std::string sharedMemoryPath = "/tmp/CoreArbiter/testmem";
+std::string socketPath = "/tmp/CoreArbiter/socket";
+std::string sharedMemoryPath = "/tmp/CoreArbiter/sharedmemory";
 std::vector<int> coresUsed = std::vector<int>();
 
 /**

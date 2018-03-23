@@ -43,7 +43,8 @@ namespace CoreArbiter {
 class CoreArbiterClient {
   public:
     // Singleton methods
-    static CoreArbiterClient* getInstance(std::string serverSocketPath) {
+    static CoreArbiterClient* getInstance(
+        std::string serverSocketPath = "/tmp/CoreArbiter/socket") {
         static CoreArbiterClient instance(serverSocketPath);
         return &instance;
     }

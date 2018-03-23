@@ -42,8 +42,7 @@ coreExec(CoreArbiterClient* client) {
 int
 main() {
     Logger::setLogLevel(CoreArbiter::DEBUG);
-    CoreArbiterClient* client =
-        CoreArbiterClient::getInstance("/tmp/CoreArbiter/testsocket");
+    CoreArbiterClient* client = CoreArbiterClient::getInstance();
     std::thread coreThread(coreExec, std::ref(client));
 
     coreThread.join();
