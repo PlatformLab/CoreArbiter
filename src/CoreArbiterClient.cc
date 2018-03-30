@@ -461,9 +461,10 @@ CoreArbiterClient::readData(int socket, void* buf, size_t numBytes,
         LOG(ERROR, "%s", fullErrStr.c_str());
         throw ClientException(fullErrStr);
     } else if ((size_t)readBytes < numBytes) {
-        std::string fullErrStr =
-            err + ": Expected " + std::to_string(numBytes) +
-            " bytes but received " + std::to_string(readBytes);
+        std::string fullErrStr = err + " TID=" + std::to_string(sys->gettid()) +
+                                 ": Expected " + std::to_string(numBytes) +
+                                 " bytes but received " +
+                                 std::to_string(readBytes);
         LOG(ERROR, "%s", fullErrStr.c_str());
         throw ClientException(fullErrStr);
     }
