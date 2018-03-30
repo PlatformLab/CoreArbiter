@@ -68,15 +68,20 @@ GTEST_DIR=../googletest/googletest
 TEST_LIBS=-Lobj/ -lCoreArbiter $(OBJECT_DIR)/libgtest.a
 INCLUDE+=-I${GTEST_DIR}/include
 
-test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest
+test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest  $(OBJECT_DIR)/CoreArbiterRequestTest
 	$(OBJECT_DIR)/CoreArbiterServerTest
 	$(OBJECT_DIR)/CoreArbiterClientTest
+	# The following test is built but must be run manually for now.
+	# $(OBJECT_DIR)/CoreArbiterRequestTest
 
 $(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
 $(OBJECT_DIR)/CoreArbiterClientTest: $(OBJECT_DIR)/CoreArbiterClientTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
-	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
+	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS) -o $@
+
+$(OBJECT_DIR)/CoreArbiterRequestTest: $(OBJECT_DIR)/CoreArbiterRequestTest.o $(OBJECT_DIR)/libCoreArbiter.a
+	$(CXX) $(INCLUDE) $(CCFLAGS) $^  $(LIBS)  -o $@
 
 $(OBJECT_DIR)/libgtest.a:
 	$(CXX) -I${GTEST_DIR}/include -I${GTEST_DIR} \
