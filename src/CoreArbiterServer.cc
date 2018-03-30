@@ -433,6 +433,7 @@ CoreArbiterServer::handleEvents() {
             if (sys->close(socket) < 0) {
                 LOG(ERROR, "Error closing socket: %s", strerror(errno));
             }
+            timerFdToInfo.erase(socket);
         } else if (socket == terminationFd) {
             return false;
         } else {
