@@ -340,6 +340,7 @@ CoreArbiterClient::getNumProcessesOnServer() {
  */
 void
 CoreArbiterClient::createNewServerConnection() {
+    Lock lock(mutex);
     if (serverSocket != -1) {
         LOG(WARNING, "This thread already has a connection to the server.");
         return;
@@ -382,7 +383,6 @@ CoreArbiterClient::createNewServerConnection() {
     pid_t threadId = sys->gettid();
     sendData(serverSocket, &threadId, sizeof(pid_t), "Error sending thread ID");
 
-    Lock lock(mutex);
     if (!processStats) {
         // This is the first time this process is registering so we need to
         // set up the shared memory pages
