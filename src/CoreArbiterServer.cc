@@ -415,7 +415,6 @@ CoreArbiterServer::handleEvents() {
 
     for (int i = 0; i < numFds; i++) {
         int socket = events[i].data.fd;
-
         if (events[i].events & EPOLLRDHUP) {
             // A thread exited or otherwise closed its connection
             LOG(NOTICE, "Detected closed connection for fd %d", socket);
@@ -426,8 +425,11 @@ CoreArbiterServer::handleEvents() {
             acceptConnection(listenSocket);
         } else if (timerFdToInfo.find(socket) != timerFdToInfo.end()) {
             // Core retrieval timer timeout
+            LOG(WARNING, "Timer fire closing socket %d", socket);
             timeoutThreadPreemption(socket);
-            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, socket, &events[i]);
+            if (sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, socket, &events[i]) < 0) {
+                LOG(ERROR, "Error removing timer from epoll: %s", strerror(errno));
+            }
             if (sys->close(socket) < 0) {
                 LOG(ERROR, "Error closing socket: %s", strerror(errno));
             }
@@ -606,8 +608,8 @@ CoreArbiterServer::acceptConnection(int listenSocket) {
     processIdToInfo[processId]->threadStateToSet[RUNNING_UNMANAGED].insert(
         thread);
 
-    LOG(NOTICE, "Registered thread with id %d on process %d", threadId,
-        processId);
+    LOG(NOTICE, "Registered thread with id %d on process %d on socket %d", threadId,
+        processId, socket);
 
     // TimeTrace::record("SERVER: Finished acceptConnection");
 }
@@ -1175,6 +1177,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
     process->stats->coreReleaseRequestCount += 1;
 
     int timerFd = sys->timerfd_create(CLOCK_MONOTONIC, 0);
+    LOG(DEBUG, "Created timerFd %d", timerFd);
     if (timerFd < 0) {
         LOG(ERROR, "Error on timerfd_create: %s", strerror(errno));
         return;
@@ -1260,8 +1263,13 @@ CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
     // Don't generate a SIGPIPE signal if the peer on a stream-
     // oriented socket has closed the connection.
     // The EPIPE error is still returned.
-    if (sys->send(socket, buf, numBytes, MSG_NOSIGNAL) < 0) {
+    ssize_t bytesSent = sys->send(socket, buf, numBytes, MSG_NOSIGNAL);
+    if (bytesSent < 0) {
         LOG(ERROR, "%s: %s", err.c_str(), strerror(errno));
+        return false;
+    }
+    if (bytesSent != static_cast<ssize_t>(numBytes)) {
+        LOG(ERROR, "%s: Expected to send %zu bytes, only sent %ld bytes.", err.c_str(), numBytes, bytesSent);
         return false;
     }
     return true;
