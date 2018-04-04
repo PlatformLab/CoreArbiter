@@ -21,7 +21,7 @@ namespace CoreArbiter {
 using PerfUtils::Cycles;
 
 FILE* Logger::errorStream = stderr;
-LogLevel Logger::displayMinLevel = NOTICE;
+LogLevel Logger::displayMinLevel = WARNING;
 std::mutex Logger::mutex;
 
 /**
