@@ -1125,81 +1125,103 @@ CoreArbiterServer::distributeCores() {
         updateUnmanagedCpuset();
     }
 
-    // Assign cores to threads
+    // Extract the subset of managedCores that do not have a managedThread
+    // under the current distribution, as well as the subset of managedCores
+    // that have a premptible thread on them.
+    std::deque<struct CoreInfo*> availableManagedCores;
+    std::deque<struct CoreInfo*> preemptibleManagedCores;
     for (struct CoreInfo* core : managedCores) {
-        if (!core->managedThread && !threadsToReceiveCores.empty()) {
-            // This core is available. Give it to a thread not already on
-            // a core.
-            struct ThreadInfo* thread = threadsToReceiveCores.front();
-            threadsToReceiveCores.pop_front();
-            struct ProcessInfo* process = thread->process;
-
-            LOG(NOTICE, "Granting core %d to thread %d from process %d",
-                core->id, thread->id, process->id);
-
-            // Move the thread before waking it up so that it wakes up in its
-            // new cpuset
-            ThreadState prevState = thread->state;
-            if (!moveThreadToManagedCore(thread, core)) {
-                // We were probably unable to move this thread to a managed
-                // core because it has exited. To handle this case, it is
-                // easiest to leave this core unoccupied for now, since we will
-                // receive a hangup message from the thread's socket at which
-                // point distributeCores() will be called again and this core
-                // will be filled.
-                LOG(DEBUG,
-                    "Skipping assignment of core %d because were were "
-                    "unable to write to it\n",
-                    core->id);
-                continue;
-            }
-
-            if (prevState == RUNNING_PREEMPTED) {
-                LOG(DEBUG,
-                    "Thread %d was previously running preempted on the "
-                    "unmanaged core\n",
-                    thread->id);
-                process->stats->unpreemptedCount++;
-            } else {
-                // Thread was blocked
-                if (!testingSkipSocketCommunication) {
-                    // Wake up the thread
-                    timeTrace("SERVER: Sending wakeup");
-                    if (!sendData(thread->socket, &core->id, sizeof(int),
-                                  "Error sending core ID to thread " +
-                                      std::to_string(thread->id))) {
-                        if (errno == EPIPE) {
-                            // The system got a broken pipe error, then clean
-                            // up the connection.
-                            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
-                                           thread->socket, NULL);
-                            cleanupConnection(thread->socket);
-                        } else {
-                            exit(-1);
-                        }
-                    }
-                    timeTrace("SERVER: Finished sending wakeup");
-                    LOG(DEBUG, "Sent wakeup");
-                }
-
-                process->stats->numBlockedThreads--;
-                LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
-                    process->stats->numBlockedThreads.load());
-            }
-        } else if (threadsAlreadyManaged.find(core->managedThread) !=
+        if (!core->managedThread) {
+            availableManagedCores.push_back(core);
+        } else if (threadsAlreadyManaged.find(core->managedThread) ==
                    threadsAlreadyManaged.end()) {
-            // This thread is supposed to have a core, so do nothing.
+            preemptibleManagedCores.push_back(core);
+        } else {
             LOG(DEBUG, "Keeping thread %d on core %d", core->managedThread->id,
                 core->id);
-        } else if (core->managedThread) {
-            // The thread on this core needs to be preempted. It will be
-            // assigned to a new thread (one of the ones at the end of
-            // threadsToReceiveCores) when the currently running thread blocks
-            // or is demoted in timeoutThreadPreemption
-            requestCoreRelease(core);
         }
     }
 
+    // Go through threads and try to find a core for them.
+    while (!threadsToReceiveCores.empty() && !availableManagedCores.empty()) {
+        struct ThreadInfo* thread = threadsToReceiveCores.front();
+        threadsToReceiveCores.pop_front();
+
+        // Find any core for; we will introduce affinities here later.
+        struct CoreInfo* core = availableManagedCores.front();
+        availableManagedCores.pop_front();
+
+        struct ProcessInfo* process = thread->process;
+
+        LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
+            thread->id, process->id);
+
+        // Move the thread before waking it up so that it wakes up in its
+        // new cpuset
+        ThreadState prevState = thread->state;
+        if (!moveThreadToManagedCore(thread, core)) {
+            // We were probably unable to move this thread to a managed
+            // core because it has exited. To handle this case, it is
+            // easiest to leave this core unoccupied for now, since we will
+            // receive a hangup message from the thread's socket at which
+            // point distributeCores() will be called again and this core
+            // will be filled.
+            LOG(DEBUG,
+                "Skipping assignment of core %d because were were "
+                "unable to write to it\n",
+                core->id);
+            continue;
+        }
+
+        if (prevState == RUNNING_PREEMPTED) {
+            LOG(DEBUG,
+                "Thread %d was previously running preempted on the "
+                "unmanaged core\n",
+                thread->id);
+            process->stats->unpreemptedCount++;
+        } else {
+            // Thread was blocked
+            if (!testingSkipSocketCommunication) {
+                // Wake up the thread
+                // TimeTrace::record("SERVER: Sending wakeup");
+                if (!sendData(thread->socket, &core->id, sizeof(int),
+                              "Error sending core ID to thread " +
+                                  std::to_string(thread->id))) {
+                    if (errno == EPIPE) {
+                        // The system got a broken pipe error, then clean
+                        // up the connection.
+                        sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, thread->socket,
+                                       NULL);
+                        cleanupConnection(thread->socket);
+                    } else {
+                        exit(-1);
+                    }
+                }
+                // TimeTrace::record("SERVER: Finished sending wakeup\n");
+                LOG(DEBUG, "Sent wakeup");
+            }
+
+            process->stats->numBlockedThreads--;
+            LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
+                process->stats->numBlockedThreads.load());
+        }
+    }
+
+    // If there are still threads without a core, then preempt as many
+    // preemptibleManagedCores as we need.
+    while (!threadsToReceiveCores.empty()) {
+        if (preemptibleManagedCores.empty()) {
+            LOG(ERROR,
+                "Invariant violated: threadsToReceiveCores is not empty, but "
+                "there are no cores to preempt.");
+            abort();
+        }
+        threadsToReceiveCores.pop_front();
+
+        struct CoreInfo* core = preemptibleManagedCores.front();
+        preemptibleManagedCores.pop_front();
+        requestCoreRelease(core);
+    }
     timeTrace("SERVER: Finished core distribution");
 }
 
