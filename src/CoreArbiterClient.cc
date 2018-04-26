@@ -27,6 +27,13 @@
 
 #include "CoreArbiterClient.h"
 #include "Logger.h"
+#include "PerfUtils/TimeTrace.h"
+#include "PerfUtils/Util.h"
+
+using PerfUtils::TimeTrace;
+
+// Uncomment the following line to enable time traces.
+// #define TIME_TRACE 1
 
 namespace CoreArbiter {
 
@@ -37,6 +44,23 @@ static Syscall defaultSyscall;
 Syscall* CoreArbiterClient::sys = &defaultSyscall;
 
 bool CoreArbiterClient::testingSkipConnectionSetup = false;
+
+// Provides a cleaner way of invoking TimeTrace::record, with the code
+// conditionally compiled in or out by the TIME_TRACE #ifdef. Arguments
+// are made uint64_t (as opposed to uin32_t) so the caller doesn't have to
+// frequently cast their 64-bit arguments into uint32_t explicitly: we will
+// help perform the casting internally.
+static inline void
+timeTrace(const char* format,
+		uint64_t arg0 = 0, uint64_t arg1 = 0, uint64_t arg2 = 0,
+		uint64_t arg3 = 0)
+{
+#if TIME_TRACE
+	TimeTrace::record(format, uint32_t(arg0), uint32_t(arg1),
+			uint32_t(arg2), uint32_t(arg3));
+#endif
+}
+
 
 /**
  * Private constructor because CoreArbiterClient is a singleton class. The
@@ -92,6 +116,7 @@ CoreArbiterClient::~CoreArbiterClient() {
  */
 void
 CoreArbiterClient::setRequestedCores(std::vector<uint32_t> numCores) {
+    timeTrace("CLIENT: setRequestedCores invoked");
     if (numCores.size() != NUM_PRIORITIES) {
         std::string err = "Core request must have " +
                           std::to_string(NUM_PRIORITIES) + " priorities";
@@ -152,6 +177,7 @@ CoreArbiterClient::mustReleaseCore() {
 
     coreReleasePendingCount++;
     LOG(NOTICE, "Core release requested");
+    timeTrace("CLIENT: Detected that a core release was requested");
     return true;
 }
 
@@ -204,6 +230,7 @@ CoreArbiterClient::blockUntilCoreAvailable() {
             }
         }
     }
+    timeTrace("CLIENT: blockUntilCoreAvailable about to release a core");
 
     numBlockedThreads++;
 
@@ -227,6 +254,7 @@ CoreArbiterClient::blockUntilCoreAvailable() {
     numOwnedCores++;
     numBlockedThreads--;
 
+    timeTrace("CLIENT: blockUntilCoreAvailable just obtained a core");
     return coreId;
 }
 
