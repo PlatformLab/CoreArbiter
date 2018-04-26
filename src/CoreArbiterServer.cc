@@ -1151,7 +1151,7 @@ CoreArbiterServer::distributeCores() {
                             exit(-1);
                         }
                     }
-                    timeTrace("SERVER: Finished sending wakeup\n");
+                    timeTrace("SERVER: Finished sending wakeup");
                     LOG(DEBUG, "Sent wakeup");
                 }
 
