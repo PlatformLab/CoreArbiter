@@ -29,6 +29,9 @@
 
 using PerfUtils::TimeTrace;
 
+// Uncomment the following line to enable time traces.
+// #define TIME_TRACE 1
+
 namespace CoreArbiter {
 
 std::string CoreArbiterServer::cpusetPath = "/sys/fs/cgroup/cpuset";
@@ -432,7 +435,9 @@ CoreArbiterServer::handleEvents() {
 
 #if TIME_TRACE
     PerfUtils::Util::serialize();
-    TimeTrace::record("SERVER: After epoll_wait");
+    if (numFds != 0) {
+        TimeTrace::record("SERVER: After epoll_wait");
+    }
 #endif
 
     for (int i = 0; i < numFds; i++) {
@@ -740,6 +745,7 @@ CoreArbiterServer::coresRequested(int socket) {
                   "Error receiving number of cores requested")) {
         return;
     }
+    timeTrace("SERVER: Read number of cores requested");
 
     struct ThreadInfo* thread = threadSocketToInfo[socket];
     struct ProcessInfo* process = thread->process;
