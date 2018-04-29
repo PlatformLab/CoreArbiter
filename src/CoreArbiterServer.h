@@ -56,7 +56,8 @@ class CoreArbiterServer {
   public:
     CoreArbiterServer(std::string socketPath, std::string sharedMemPathPrefix,
                       std::vector<int> managedCores = {},
-                      bool arbitrateImmediately = true);
+                      bool arbitrateImmediately = true,
+                      std::vector<int> allAvailableCores = {});
     ~CoreArbiterServer();
     void startArbitration();
     void endArbitration();
