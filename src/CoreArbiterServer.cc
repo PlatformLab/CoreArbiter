@@ -502,6 +502,11 @@ CoreArbiterServer::handleEvents() {
         for (auto coreIter = managedCores.begin();
              coreIter != managedCores.end();) {
             struct CoreInfo* core = *coreIter;
+            // Remove unrelated threads that may have arisen if some core did a
+            // std::thread creation.
+            if (core->managedThread) {
+                removeUnmanagedThreadsFromCore(core);
+            }
             if (!core->managedThread &&
                 Cycles::toMilliseconds(now - core->threadRemovalTime) >=
                     cpusetUpdateTimeout) {
@@ -1396,6 +1401,43 @@ CoreArbiterServer::moveProcsToCpuset(std::string fromPath, std::string toPath) {
 
     fromFile.close();
     toFile.close();
+}
+
+/**
+ * Examines all the threads on a given core, and removes threads which are not
+ * the managed thread from that core.
+ */
+void
+CoreArbiterServer::removeUnmanagedThreadsFromCore(CoreInfo* core) {
+    if (testingSkipCpusetAllocation) {
+        return;
+    }
+
+    std::ifstream fromFile(core->cpusetFilename);
+    if (!fromFile.is_open()) {
+        LOG(ERROR, "Unable to open %s", core->cpusetFilename.c_str());
+        exit(-1);
+    }
+
+    int threadId;
+    while (fromFile >> threadId) {
+        // The managed thread should stay put.
+        if (threadId == core->managedThread->id)
+            continue;
+
+        // Every other thread should be moved to the unmanagedCpusetTasks.
+        unmanagedCpusetTasks << threadId;
+        unmanagedCpusetTasks.flush();
+        if (unmanagedCpusetTasks.bad()) {
+            // This error is likely because the thread has exited. Sleeping
+            // helps keep the kernel from giving more errors the next time we
+            // try to move a legitimate thread.
+            LOG(ERROR, "Unable to write %d to unmanaged cpuset file",
+                threadId);
+            usleep(750);
+        }
+    }
+    fromFile.close();
 }
 
 /**

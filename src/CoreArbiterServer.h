@@ -236,6 +236,7 @@ class CoreArbiterServer {
 
     void createCpuset(std::string dirName, std::string cores, std::string mems);
     void moveProcsToCpuset(std::string fromPath, std::string toPath);
+    void removeUnmanagedThreadsFromCore(struct CoreInfo* core);
     void removeOldCpusets(std::string arbiterCpusetPath);
     bool moveThreadToManagedCore(struct ThreadInfo* thread,
                                  struct CoreInfo* core);
