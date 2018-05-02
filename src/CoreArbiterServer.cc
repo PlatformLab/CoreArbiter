@@ -51,13 +51,16 @@ bool CoreArbiterServer::testingDoNotChangeManagedCores = false;
 // frequently cast their 64-bit arguments into uint32_t explicitly: we will
 // help perform the casting internally.
 static inline void
-timeTrace(const char* format, uint64_t arg0 = 0, uint64_t arg1 = 0,
-          uint64_t arg2 = 0, uint64_t arg3 = 0) {
+timeTrace(const char* format,
+		uint64_t arg0 = 0, uint64_t arg1 = 0, uint64_t arg2 = 0,
+		uint64_t arg3 = 0)
+{
 #if TIME_TRACE
-    TimeTrace::record(format, uint32_t(arg0), uint32_t(arg1), uint32_t(arg2),
-                      uint32_t(arg3));
+	TimeTrace::record(format, uint32_t(arg0), uint32_t(arg1),
+			uint32_t(arg2), uint32_t(arg3));
 #endif
 }
+
 
 /**
  * Constructs a CoreArbiterServer object and sets up all necessary state for
@@ -89,16 +92,11 @@ timeTrace(const char* format, uint64_t arg0 = 0, uint64_t arg1 = 0,
  * \param arbitrateImmediately
  *     If true, the server will begin arbitrating after a successful
  *     construction
- * \param allAvailableCores
- *     If non-empty, the CoreArbiter will pretend that these are the only cores
- *     in the system to divide among managed and unmanaged cpusets. This is
- *     useful for experiments simulating a smaller number of physical cores.
  */
 CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
                                      std::vector<int> managedCoreIds,
-                                     bool arbitrateImmediately,
-                                     std::vector<int> allAvailableCores)
+                                     bool arbitrateImmediately)
     : socketPath(socketPath),
       listenSocket(-1),
       sharedMemPathPrefix(sharedMemPathPrefix),
@@ -137,44 +135,26 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
     // If managedCoreIds is empty, populate it with everything except
     // core 0
     unsigned int numCores = std::thread::hardware_concurrency();
-    if (allAvailableCores.empty()) {
-        for (uint32_t i = 0; i < numCores; i++) {
-            allAvailableCores.push_back(i);
-        }
-    }
-
-    // Validate that allAvailableCores is a superset of managedCores.
-    for (int id : managedCoreIds) {
-        if (std::find(allAvailableCores.begin(), allAvailableCores.end(), id) ==
-            allAvailableCores.end()) {
-            LOG(ERROR, "Managed coreId %d is not in allAvailableCores", id);
-            exit(-1);
-        }
-    }
-
     if (!testingDoNotChangeManagedCores) {
-        if (managedCoreIds.empty() ||
-            managedCoreIds.size() == allAvailableCores.size()) {
+        if (managedCoreIds.empty() || managedCoreIds.size() == numCores) {
             // If no managed cores are specified or if every core is given,
             // make every core available to be managed except for CPU 0. We
             // need to ensure that at least one core remains unmanaged so that
             // the arbiter has something to run on.
             managedCoreIds.clear();
-            for (uint32_t i = 1; i < allAvailableCores.size(); i++) {
-                managedCoreIds.push_back(allAvailableCores[i]);
+            for (int id = 1; id < static_cast<int>(numCores); id++) {
+                managedCoreIds.push_back(id);
             }
-            alwaysUnmanagedString = std::to_string(allAvailableCores[0]) + ",";
+            alwaysUnmanagedString = "0,";
         } else {
             alwaysUnmanagedString = "";
             std::sort(managedCoreIds.begin(), managedCoreIds.end());
             size_t idx = 0;
-            for (uint32_t i = 0; i < allAvailableCores.size(); i++) {
-                if (idx < managedCoreIds.size() &&
-                    managedCoreIds[idx] == allAvailableCores[i]) {
+            for (int i = 0; i < static_cast<int>(numCores); i++) {
+                if (idx < managedCoreIds.size() && managedCoreIds[idx] == i) {
                     idx++;
                 } else {
-                    alwaysUnmanagedString +=
-                        std::to_string(allAvailableCores[i]) + ",";
+                    alwaysUnmanagedString += std::to_string(i) + ",";
                 }
             }
         }
@@ -188,10 +168,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         // Create a new cpuset directory for core arbitration. Since this is
         // going to be a parent of all the arbiter's individual core cpusets, it
         // needs to include every core.
-        std::string allCores = std::to_string(allAvailableCores[0]);
-        for (uint32_t i = 1; i < allAvailableCores.size(); i++) {
-            allCores += "," + std::to_string(allAvailableCores[i]);
-        }
+        std::string allCores = "0-" + std::to_string(numCores - 1);
         createCpuset(arbiterCpusetPath, allCores, "0");
 
         // Set up managed cores
@@ -364,6 +341,7 @@ CoreArbiterServer::~CoreArbiterServer() {
     TimeTrace::setOutputFileName("CoreArbiterServer.log");
     TimeTrace::print();
 #endif
+
 
     if (!testingSkipMemoryDeallocation) {
         for (struct CoreInfo* core : managedCores) {
