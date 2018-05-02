@@ -985,6 +985,81 @@ CoreArbiterServer::cleanupConnection(int socket) {
 }
 
 /**
+ * Get the core id of the hypertwin of the given core. This code assumes there
+ * is only one such hypertwin on the system it is running on. It also assumes
+that hypertwins are delimited by the comma separator.
+ *
+ * \param coreId
+ *     The coreId whose hypertwin's ID will be returned.
+ */
+int
+getHyperTwin(int coreId) {
+    // This file contains the siblings of core coreId.
+    std::string siblingFilePath = "/sys/devices/system/cpu/cpu" +
+                                  std::to_string(coreId) +
+                                  "/topology/thread_siblings_list";
+    FILE* siblingFile = fopen(siblingFilePath.c_str(), "r");
+    int twin1, twin2;
+    // The first cpuid in the file is always that of the physical core
+    fscanf(siblingFile, "%d,%d", &twin1, &twin2);
+    if (coreId == twin1)
+        return twin2;
+    return twin1;
+}
+
+/**
+ * Find the best core for a given process from the candidate deque, and remove
+ * it from the candidate deque.
+ */
+CoreArbiterServer::CoreInfo*
+CoreArbiterServer::findGoodCoreForProcess(
+    ProcessInfo* process, std::deque<struct CoreInfo*>& candidates) {
+    // Compute the set of cores this process currently has managed threads
+    // on, which may be empty.
+    std::unordered_set<int> coresOwnedByProcess;
+    for (struct ThreadInfo* threadInfo :
+         process->threadStateToSet[RUNNING_MANAGED]) {
+        // We assume managed threads have a core.
+        coresOwnedByProcess.insert(threadInfo->core->id);
+    }
+
+    std::unordered_set<int> availableManagedCoreIds;
+    for (struct CoreInfo* candidate : candidates) {
+        availableManagedCoreIds.insert(candidate->id);
+    }
+    // First look for a core which is the hypertwin of one of this
+    // process's existing cores
+    for (struct CoreInfo* candidate : candidates) {
+        LOG(DEBUG, "Considering candidate %d, hypertwin of %d", candidate->id,
+            getHyperTwin(candidate->id));
+        if (coresOwnedByProcess.find(getHyperTwin(candidate->id)) !=
+            coresOwnedByProcess.end()) {
+            LOG(NOTICE, "candidate %d, hypertwin of %d has been selected",
+                candidate->id, getHyperTwin(candidate->id));
+            candidates.erase(
+                std::find(candidates.begin(), candidates.end(), candidate));
+            return candidate;
+        }
+    }
+
+    // Next look for a core whose hypertwin is also in the set of
+    // available cores.
+    for (struct CoreInfo* candidate : candidates) {
+        if (availableManagedCoreIds.find(getHyperTwin(candidate->id)) !=
+            availableManagedCoreIds.end()) {
+            candidates.erase(
+                std::find(candidates.begin(), candidates.end(), candidate));
+            return candidate;
+        }
+    }
+
+    // Finally, find any available core
+    CoreInfo* core = candidates.front();
+    candidates.pop_front();
+    return core;
+}
+
+/**
  * This method handles all the logic of deciding which threads should receive
  * which cores and actually changing the underlying cpusets, both to scale
  * up/down the number of managed cores and to assign threads to managed cpusets.
@@ -1114,11 +1189,22 @@ CoreArbiterServer::distributeCores() {
         // We need to make more cores managed
         size_t numCoresToMakeManaged = numAssignedCores - managedCores.size();
         LOG(DEBUG, "Making %lu cores managed", numCoresToMakeManaged);
-        managedCores.insert(managedCores.end(),
-                            unmanagedCores.end() - numCoresToMakeManaged,
-                            unmanagedCores.end());
-        unmanagedCores.erase(unmanagedCores.end() - numCoresToMakeManaged,
-                             unmanagedCores.end());
+        // Choose the right cores to make unmanaged, based on the set of
+        // threads to receive cores.
+        // This is the number of already-managed cores that can be used to
+        // service threadsToReceiveCores.
+        uint32_t offset = static_cast<uint32_t>(managedCores.size() -
+                                                threadsAlreadyManaged.size());
+        // The following loop assumes that the set of already-managed cores
+        // which will be considered by threadsToReceiveCores is already a good
+        // set. A more strict calculation would throw out all parts of the
+        // managed core set which do not already have a thread, and reconsider
+        // the additions to the managed core set from scratch.
+        for (uint32_t i = 0; i < numCoresToMakeManaged; i++) {
+            CoreInfo* coreToAdd = findGoodCoreForProcess(
+                threadsToReceiveCores[i + offset]->process, unmanagedCores);
+            managedCores.push_back(coreToAdd);
+        }
 
         // Update the unmanaged cpuset now so that threads it will be updated
         // by the time we wake up managed threads
@@ -1142,16 +1228,17 @@ CoreArbiterServer::distributeCores() {
         }
     }
 
+    // TODO: Consider all cores; currently there is an explicit set of managed
+    // vs unmanaged cores, and the managed core set is too small.
+    // Somehow we need to consider all cores when we decide what to do.
+
     // Go through threads and try to find a core for them.
     while (!threadsToReceiveCores.empty() && !availableManagedCores.empty()) {
         struct ThreadInfo* thread = threadsToReceiveCores.front();
         threadsToReceiveCores.pop_front();
 
-        // Find any core for; we will introduce affinities here later.
-        struct CoreInfo* core = availableManagedCores.front();
-        availableManagedCores.pop_front();
-
         struct ProcessInfo* process = thread->process;
+        CoreInfo* core = findGoodCoreForProcess(process, availableManagedCores);
 
         LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
             thread->id, process->id);
@@ -1476,8 +1563,7 @@ CoreArbiterServer::removeUnmanagedThreadsFromCore(CoreInfo* core) {
             // This error is likely because the thread has exited. Sleeping
             // helps keep the kernel from giving more errors the next time we
             // try to move a legitimate thread.
-            LOG(ERROR, "Unable to write %d to unmanaged cpuset file",
-                threadId);
+            LOG(ERROR, "Unable to write %d to unmanaged cpuset file", threadId);
             usleep(750);
         }
     }
