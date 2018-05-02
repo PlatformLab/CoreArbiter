@@ -51,16 +51,13 @@ bool CoreArbiterServer::testingDoNotChangeManagedCores = false;
 // frequently cast their 64-bit arguments into uint32_t explicitly: we will
 // help perform the casting internally.
 static inline void
-timeTrace(const char* format,
-		uint64_t arg0 = 0, uint64_t arg1 = 0, uint64_t arg2 = 0,
-		uint64_t arg3 = 0)
-{
+timeTrace(const char* format, uint64_t arg0 = 0, uint64_t arg1 = 0,
+          uint64_t arg2 = 0, uint64_t arg3 = 0) {
 #if TIME_TRACE
-	TimeTrace::record(format, uint32_t(arg0), uint32_t(arg1),
-			uint32_t(arg2), uint32_t(arg3));
+    TimeTrace::record(format, uint32_t(arg0), uint32_t(arg1), uint32_t(arg2),
+                      uint32_t(arg3));
 #endif
 }
-
 
 /**
  * Constructs a CoreArbiterServer object and sets up all necessary state for
@@ -341,7 +338,6 @@ CoreArbiterServer::~CoreArbiterServer() {
     TimeTrace::setOutputFileName("CoreArbiterServer.log");
     TimeTrace::print();
 #endif
-
 
     if (!testingSkipMemoryDeallocation) {
         for (struct CoreInfo* core : managedCores) {
@@ -1271,22 +1267,24 @@ CoreArbiterServer::distributeCores() {
                 process->stats->numBlockedThreads.load());
         }
     }
+    // Sanity check; make sure we have enough preemptible cores to cover the
+    // threads that should receive cores.
+    if (preemptibleManagedCores.size() < threadsToReceiveCores.size()) {
+        LOG(ERROR,
+            "Invariant violated: threadsToReceiveCores is not empty, but "
+            "there are no cores to preempt.");
+        abort();
+    }
 
-    // If there are still threads without a core, then preempt as many
-    // preemptibleManagedCores as we need.
-    while (!threadsToReceiveCores.empty()) {
-        if (preemptibleManagedCores.empty()) {
-            LOG(ERROR,
-                "Invariant violated: threadsToReceiveCores is not empty, but "
-                "there are no cores to preempt.");
-            abort();
-        }
-        threadsToReceiveCores.pop_front();
-
+    // All cores which are preemptible must be preempted; otherwise
+    // applications cannot scale down unless there is competition from other
+    // applications.
+    while (!preemptibleManagedCores.empty()) {
         struct CoreInfo* core = preemptibleManagedCores.front();
         preemptibleManagedCores.pop_front();
         requestCoreRelease(core);
     }
+
     timeTrace("SERVER: Finished core distribution");
 }
 
