@@ -24,7 +24,6 @@ using CoreArbiter::Logger;
 std::string socketPath = "/tmp/CoreArbiter/socket";
 std::string sharedMemoryPath = "/tmp/CoreArbiter/sharedmemory";
 std::vector<int> coresUsed = std::vector<int>();
-std::vector<int> allAvailableCores = std::vector<int>();
 
 /**
  * This function currently supports only long options.
@@ -45,8 +44,7 @@ parseOptions(int* argcp, const char** argv) {
         bool takesArgument;
     } optionSpecifiers[] = {{"socketPath", 'p', true},
                             {"sharedMemoryPath", 'm', true},
-                            {"coresUsed", 's', true},
-                            {"allAvailableCores", 'a', true}};
+                            {"coresUsed", 's', true}};
     const int UNRECOGNIZED = ~0;
 
     int i = 1;
@@ -96,13 +94,6 @@ parseOptions(int* argcp, const char** argv) {
                 else
                     coresUsed = PerfUtils::Util::parseRanges(optionArgument);
                 break;
-            case 'a':
-                if (memcmp(optionArgument, "ALL", sizeof("ALL")) == 0)
-                    allAvailableCores = std::vector<int>();
-                else
-                    allAvailableCores =
-                        PerfUtils::Util::parseRanges(optionArgument);
-                break;
             case UNRECOGNIZED:
                 LOG(CoreArbiter::ERROR, "Unrecognized option %s given.",
                     optionName);
@@ -116,9 +107,9 @@ int
 main(int argc, const char** argv) {
     Logger::setLogLevel(CoreArbiter::ERROR);
     parseOptions(&argc, argv);
-    printf("socketPath:        %s\n", socketPath.c_str());
-    printf("sharedMemoryPath:  %s\n", sharedMemoryPath.c_str());
-    printf("coresUsed:        ");
+    printf("socketPath:       %s\n", socketPath.c_str());
+    printf("sharedMemoryPath: %s\n", sharedMemoryPath.c_str());
+    printf("coresUsed:       ");
     if (coresUsed.empty()) {
         printf(" ALL\n");
     } else {
@@ -126,18 +117,8 @@ main(int argc, const char** argv) {
             printf(" %d", coresUsed[i]);
         putchar('\n');
     }
-    printf("allAvailableCores:");
-    if (allAvailableCores.empty()) {
-        printf(" ALL\n");
-    } else {
-        for (size_t i = 0; i < allAvailableCores.size(); i++)
-            printf(" %d", allAvailableCores[i]);
-        putchar('\n');
-    }
-
     fflush(stdout);
 
-    CoreArbiterServer server(socketPath, sharedMemoryPath, coresUsed,
-                             /*arbitrateImmediately=*/true, allAvailableCores);
+    CoreArbiterServer server(socketPath, sharedMemoryPath, coresUsed);
     return 0;
 }
