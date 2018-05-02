@@ -15,6 +15,11 @@
  * mechanism.
  */
 
+// Uncomment the following line to make this benchmark pause for 2 seconds
+// between allocations so that we observe the order of allocation and
+// de-allocation.
+// #define PAUSE_AT_ALLOCATION 1
+
 using CoreArbiter::CoreArbiterClient;
 using PerfUtils::Cycles;
 using PerfUtils::TimeTrace;
@@ -57,10 +62,16 @@ main(int argc, const char** argv) {
         for (j = 1; j < MAX_CORES; j++) {
             coreRequest[0] = j;
             client->setRequestedCores(coreRequest);
+#if PAUSE_AT_ALLOCATION
+            sleep(2);
+#endif
         }
         for (; j > 0; j--) {
             coreRequest[0] = j;
             client->setRequestedCores(coreRequest);
+#if PAUSE_AT_ALLOCATION
+            sleep(2);
+#endif
         }
     }
     coreRequest[0] = MAX_CORES;
