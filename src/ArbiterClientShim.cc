@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include "ArbiterClientShim.h"
+#include <atomic>
 #include <sched.h>
 
 namespace Arachne {
@@ -22,8 +23,10 @@ namespace Arachne {
  **/
 int
 ArbiterClientShim::blockUntilCoreAvailable() {
+    static std::atomic<int> nextCoreId(0);
+    static thread_local int coreId = nextCoreId.fetch_add(1);
     waitingForAvailableCore.wait();
-    return sched_getcpu();
+    return coreId;
 }
 
 /**
@@ -72,5 +75,4 @@ void
 ArbiterClientShim::unregisterThread() {
     // Because there is no server, this function is a no-op.
 }
-
 }  // namespace Arachne
