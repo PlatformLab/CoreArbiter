@@ -36,6 +36,9 @@ class Semaphore {
     // Quantity of resources available for consumption.
     uint64_t count = 0;
 
+    // The number of threads which are blocked on this semaphore.
+    int blocked_count = 0;
+
   public:
     // Restore the resource count to its original state.
     void reset() {
@@ -53,8 +56,11 @@ class Semaphore {
     // Block until this resource is available.
     void wait() {
         std::unique_lock<decltype(mutex)> lock(mutex);
-        while (!count)  // Handle spurious wake-ups.
+        while (!count) { // Handle spurious wake-ups.
+            blocked_count++;
             condition.wait(lock);
+            blocked_count--;
+        }
         --count;
     }
 
@@ -68,6 +74,13 @@ class Semaphore {
             return true;
         }
         return false;
+    }
+
+    // This method is used in unit tests to determine how many threads are
+    // blocked on this semaphore.
+    int get_num_blocked_for_test() {
+        std::lock_guard<decltype(mutex)> lock(mutex);
+        return blocked_count;
     }
 };
 
