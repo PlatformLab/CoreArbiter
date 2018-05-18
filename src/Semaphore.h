@@ -56,7 +56,7 @@ class Semaphore {
     // Block until this resource is available.
     void wait() {
         std::unique_lock<decltype(mutex)> lock(mutex);
-        while (!count) { // Handle spurious wake-ups.
+        while (!count) {  // Handle spurious wake-ups.
             blocked_count++;
             condition.wait(lock);
             blocked_count--;

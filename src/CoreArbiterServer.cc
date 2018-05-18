@@ -51,16 +51,13 @@ bool CoreArbiterServer::testingDoNotChangeManagedCores = false;
 // frequently cast their 64-bit arguments into uint32_t explicitly: we will
 // help perform the casting internally.
 static inline void
-timeTrace(const char* format,
-		uint64_t arg0 = 0, uint64_t arg1 = 0, uint64_t arg2 = 0,
-		uint64_t arg3 = 0)
-{
+timeTrace(const char* format, uint64_t arg0 = 0, uint64_t arg1 = 0,
+          uint64_t arg2 = 0, uint64_t arg3 = 0) {
 #if TIME_TRACE
-	TimeTrace::record(format, uint32_t(arg0), uint32_t(arg1),
-			uint32_t(arg2), uint32_t(arg3));
+    TimeTrace::record(format, uint32_t(arg0), uint32_t(arg1), uint32_t(arg2),
+                      uint32_t(arg3));
 #endif
 }
-
 
 /**
  * Constructs a CoreArbiterServer object and sets up all necessary state for
@@ -341,7 +338,6 @@ CoreArbiterServer::~CoreArbiterServer() {
     TimeTrace::setOutputFileName("CoreArbiterServer.log");
     TimeTrace::print();
 #endif
-
 
     if (!testingSkipMemoryDeallocation) {
         for (struct CoreInfo* core : managedCores) {
@@ -1432,8 +1428,7 @@ CoreArbiterServer::removeUnmanagedThreadsFromCore(CoreInfo* core) {
             // This error is likely because the thread has exited. Sleeping
             // helps keep the kernel from giving more errors the next time we
             // try to move a legitimate thread.
-            LOG(ERROR, "Unable to write %d to unmanaged cpuset file",
-                threadId);
+            LOG(ERROR, "Unable to write %d to unmanaged cpuset file", threadId);
             usleep(750);
         }
     }

@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include "ArbiterClientShim.h"
-#include <atomic>
 #include <sched.h>
+#include <atomic>
 
 namespace Arachne {
 
