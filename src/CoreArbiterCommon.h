@@ -17,6 +17,7 @@
 #define CORE_ARBITER_COMMON_H
 
 #include <stdint.h>
+#include <string.h>
 #include <atomic>
 #include <cstddef>
 
@@ -27,8 +28,18 @@
 #define THREAD_BLOCK 1
 #define CORE_REQUEST 2
 
+#define MAX_SUPPORTED_CORES 256
+
 namespace CoreArbiter {
 
+/**
+ * Members of this structure are used by the CoreArbiter to efficiently pass
+ * information to individual threads of a process.
+ */
+struct ThreadCommunicationBlock {
+    // True means that the thread should yield its core.
+    std::atomic<bool> coreReleaseRequested;
+};
 /**
  * Statistics kept per process. The server creates a file with this information
  * which is mmapped into memory by both the server and client. Only the server
@@ -59,12 +70,18 @@ struct ProcessStats {
     // exclusively on.
     std::atomic<uint32_t> numOwnedCores;
 
+    // This array is indexed by physical core ID, which each thread receives as
+    // the return value of blockUntilCoreAvailable.
+    ThreadCommunicationBlock threadCommunicationBlocks[MAX_SUPPORTED_CORES];
+
     ProcessStats()
         : coreReleaseRequestCount(0),
           preemptedCount(0),
           unpreemptedCount(0),
           numBlockedThreads(0),
-          numOwnedCores(0) {}
+          numOwnedCores(0) {
+        memset(threadCommunicationBlocks, 0, sizeof(threadCommunicationBlocks));
+    }
 };
 
 /**

@@ -87,8 +87,7 @@ class CoreArbiterClient {
 
     typedef std::unique_lock<std::mutex> Lock;
 
-    // Used to guard data shared across threads, such as processStats,
-    // coreReleaseCount, and coreReleasePendingCount.
+    // Used to guard data shared across threads, such as processStats.
     std::mutex mutex;
 
     // Information about this processes in shared memory. The server uses this
@@ -100,15 +99,6 @@ class CoreArbiterClient {
     // server as this client. This is useful primarily for debugging and
     // benchmarking.
     struct GlobalStats* globalStats;
-
-    // A monotonically increasing count of the number of cores this process has
-    // released back to the server (by calling blockUntilCoreAvailable()). It
-    // is incremented by the client.
-    std::atomic<uint64_t> coreReleaseCount;
-
-    // The number of cores that the client has been told it is obligated to
-    // release but has not yet done so.
-    std::atomic<uint64_t> coreReleasePendingCount;
 
     // The number of cores that this processes currently owns, i.e. the number
     // of threads that it has running on managed cores. This value is also in

@@ -718,6 +718,14 @@ CoreArbiterServer::threadBlocking(int socket) {
 
     changeThreadState(thread, BLOCKED);
     process->stats->numBlockedThreads++;
+
+    // It is possible that this thread was already preempted from its core.
+    if (thread->core) {
+        // The next thread to occupy this core should not be automatically
+        // preempted.
+        process->stats->threadCommunicationBlocks[thread->core->id]
+            .coreReleaseRequested = false;
+    }
     LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
         process->stats->numBlockedThreads.load());
     if (shouldDistributeCores) {
@@ -837,17 +845,8 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
         "its threads to the unmanaged core.\n",
         process->id);
 
-    // Remove one of this process's threads from its managed core
-    auto& managedThreadSet = process->threadStateToSet[RUNNING_MANAGED];
-    if (managedThreadSet.empty()) {
-        LOG(WARNING,
-            "Unable to preempt from process %d because it has no "
-            "managed threads.\n",
-            process->id);
-        return;
-    }
-
-    struct ThreadInfo* thread = *(managedThreadSet.begin());
+    // Remove the thread we requested preemption on from its managed core.
+    struct ThreadInfo* thread = timer->coreInfo->managedThread;
     removeThreadFromManagedCore(thread);
     changeThreadState(thread, RUNNING_PREEMPTED);
     process->stats->preemptedCount++;
@@ -889,6 +888,11 @@ CoreArbiterServer::cleanupConnection(int socket) {
         thread->core->managedThread = NULL;
         thread->core->threadRemovalTime = Cycles::rdtsc();
         process->stats->numOwnedCores--;
+
+        // If we hand this core to another thread of the same process, do not
+        // ask it to give back the core immediately.
+        process->stats->threadCommunicationBlocks[thread->core->id]
+            .coreReleaseRequested = false;
         if (process->coreReleaseCount <
             process->stats->coreReleaseRequestCount) {
             process->coreReleaseCount++;
@@ -1204,7 +1208,12 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
         "on core %d\n",
         process->id, core->id);
 
-    // Tell the process that it needs to release a core
+    // Tell the thread that it needs to release its core.
+    process->stats->threadCommunicationBlocks[core->id].coreReleaseRequested =
+        true;
+
+    // Record that the process was supposed to release a core; used for
+    // deciding whether premption is needed.
     process->stats->coreReleaseRequestCount += 1;
 
     int timerFd = sys->timerfd_create(CLOCK_MONOTONIC, 0);
@@ -1234,8 +1243,8 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
         return;
     }
 
-    timerFdToInfo[timerFd] = {process->id,
-                              process->stats->coreReleaseRequestCount.load()};
+    timerFdToInfo[timerFd] = {
+        process->id, process->stats->coreReleaseRequestCount.load(), core};
 
     timeTrace("SERVER: Finished requesting core release");
 }

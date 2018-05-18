@@ -220,6 +220,7 @@ class CoreArbiterServer {
     struct TimerInfo {
         pid_t processId;
         uint64_t coreReleaseRequestCount;
+        CoreInfo* coreInfo;
     };
 
     bool handleEvents();

@@ -573,11 +573,16 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
     // If the client is cooperative, nothing should happen
     process->coreReleaseCount = 1;
     server.requestCoreRelease(core);
-    server.handleEvents();
+
+    // Make sure the timer event for preemption is actually processed to avoid
+    // double-firing on the later handleEvents call.
+    while (server.timerFdToInfo.size())
+        server.handleEvents();
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);
 
     // If client is uncooperative, the thread should be removed from its core
     process->coreReleaseCount = 0;
+    thread->core = core;
     server.requestCoreRelease(core);
     server.handleEvents();
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_PREEMPTED);
@@ -606,7 +611,7 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_invalidateOldTimeout) {
 
     // Simulate a timer going off for a process who previously released a core
     process->coreReleaseCount = 1;
-    server.timerFdToInfo[1] = {1, 1};
+    server.timerFdToInfo[1] = {1, 1, core};
     server.timeoutThreadPreemption(1);
 
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);

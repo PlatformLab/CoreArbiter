@@ -74,8 +74,6 @@ timeTrace(const char* format, uint64_t arg0 = 0, uint64_t arg1 = 0,
  */
 CoreArbiterClient::CoreArbiterClient(std::string serverSocketPath)
     : mutex(),
-      coreReleaseCount(0),
-      coreReleasePendingCount(0),
       numOwnedCores(0),
       numBlockedThreads(0),
       serverSocketPath(serverSocketPath),
@@ -156,26 +154,13 @@ CoreArbiterClient::mustReleaseCore() {
         createNewServerConnection();
     }
 
-    // Do an initial check without the lock
-    if (coreReleaseCount + coreReleasePendingCount >=
-        processStats->coreReleaseRequestCount) {
-        LOG(DEBUG, "No core release requested");
-        return false;
+    bool coreReleaseRequested = processStats->threadCommunicationBlocks[coreId]
+                                    .coreReleaseRequested.load();
+    if (coreReleaseRequested) {
+        LOG(NOTICE, "Core release requested");
+        timeTrace("CLIENT: Detected that a core release was requested");
     }
-
-    Lock lock(mutex);
-
-    // Check again now that we have the lock
-    if (coreReleaseCount + coreReleasePendingCount >=
-        processStats->coreReleaseRequestCount) {
-        LOG(DEBUG, "No core release requested");
-        return false;
-    }
-
-    coreReleasePendingCount++;
-    LOG(NOTICE, "Core release requested");
-    timeTrace("CLIENT: Detected that a core release was requested");
-    return true;
+    return coreReleaseRequested;
 }
 
 /**
@@ -211,20 +196,15 @@ CoreArbiterClient::blockUntilCoreAvailable() {
     } else if (coreId >= 0) {
         // This thread currently has exclusive access to a core. We need to
         // check whether it should be blocking.
-        Lock lock(mutex);
-        if (coreReleaseCount == processStats->coreReleaseRequestCount) {
+        if (!processStats->threadCommunicationBlocks[coreId]
+                 .coreReleaseRequested.load()) {
             LOG(WARNING,
                 "Not blocking thread %d because its process has not "
                 "been asked to give up a core\n",
                 sys->gettid());
             return coreId;
         } else {
-            coreReleaseCount++;
             numOwnedCores--;
-
-            if (coreReleasePendingCount > 0) {
-                coreReleasePendingCount--;
-            }
         }
     }
     timeTrace("CLIENT: blockUntilCoreAvailable about to release a core");

@@ -117,16 +117,16 @@ TEST_F(CoreArbiterClientTest, setRequestedCores) {
 TEST_F(CoreArbiterClientTest, mustReleaseCore) {
     connectClient();
     ASSERT_FALSE(client.mustReleaseCore());
+    int coreId = 0;
 
+    client.coreId = coreId;
     processStats.coreReleaseRequestCount = 1;
+    processStats.threadCommunicationBlocks[coreId].coreReleaseRequested = true;
     ASSERT_TRUE(client.mustReleaseCore());
-    ASSERT_EQ(client.coreReleasePendingCount, 1u);
 
     // Simulate a blockUntilCoreAvailable() call
-    client.coreReleaseCount++;
-    client.coreReleasePendingCount--;
+    processStats.threadCommunicationBlocks[coreId].coreReleaseRequested = false;
 
-    client.coreReleaseCount++;
     ASSERT_FALSE(client.mustReleaseCore());
 }
 
@@ -147,7 +147,6 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
     client.processStats->coreReleaseRequestCount = 0;
     client.coreId = 1;
     client.processStats->numOwnedCores = 1;
-    client.coreReleasePendingCount = 0;
 
     // Thread should not be allowed to block
     EXPECT_EQ(client.blockUntilCoreAvailable(), 1);
@@ -155,19 +154,17 @@ TEST_F(CoreArbiterClientTest, blockUntilCoreAvailable_alreadyExclusive) {
 
     // This time thread should block because it owes the server a core
     client.processStats->coreReleaseRequestCount = 1;
+    processStats.threadCommunicationBlocks[client.coreId].coreReleaseRequested =
+        true;
     int coreId = 2;
     send(serverSocket, &coreId, sizeof(int), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
-    EXPECT_EQ(client.coreReleaseCount, 1u);
-    EXPECT_EQ(client.coreReleasePendingCount, 0u);
     EXPECT_EQ(client.processStats->numOwnedCores, 1u);
 
     // Same test, but this time with a pending release
     client.processStats->coreReleaseRequestCount = 1;
     send(serverSocket, &coreId, sizeof(int), 0);
     EXPECT_EQ(client.blockUntilCoreAvailable(), 2);
-    EXPECT_EQ(client.coreReleaseCount, 1u);
-    EXPECT_EQ(client.coreReleasePendingCount, 0u);
     EXPECT_EQ(client.processStats->numOwnedCores, 1u);
 
     uint8_t blockMsg;
