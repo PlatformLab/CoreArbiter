@@ -847,13 +847,16 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
 
     // Remove the thread we requested preemption on from its managed core.
     struct ThreadInfo* thread = timer->coreInfo->managedThread;
-    removeThreadFromManagedCore(thread);
-    changeThreadState(thread, RUNNING_PREEMPTED);
-    process->stats->preemptedCount++;
+    if (thread) {
+        // It is quite possible that the thread this particular timer fired on
+        // is not the same thread that failed to release a core.
+        removeThreadFromManagedCore(thread);
+        changeThreadState(thread, RUNNING_PREEMPTED);
+        process->stats->preemptedCount++;
+        distributeCores();
 
-    distributeCores();
-
-    timeTrace("SERVER: Finished thread preemption");
+        timeTrace("SERVER: Finished thread preemption");
+    }
 }
 
 /**
@@ -1114,6 +1117,12 @@ CoreArbiterServer::distributeCores() {
 
             LOG(NOTICE, "Granting core %d to thread %d from process %d",
                 core->id, thread->id, process->id);
+
+            // Ensure that the new thread is not preempted immediately due to
+            // stale state left behind by a previously preempted thread from
+            // the same process.
+            process->stats->threadCommunicationBlocks[core->id]
+                .coreReleaseRequested = false;
 
             // Move the thread before waking it up so that it wakes up in its
             // new cpuset
@@ -1576,8 +1585,14 @@ CoreArbiterServer::removeThreadFromManagedCore(struct ThreadInfo* thread,
     // It likely has something to do with how the kernel handles moving
     // processes between cpusets.
 
+    if (!thread) {
+        LOG(WARNING, "No thread to remove from managed core");
+        return;
+    }
+
     if (!thread->core) {
         LOG(WARNING, "Thread %d was already on unmanaged core", thread->id);
+        return;
     }
 
     if (changeCpuset && !testingSkipCpusetAllocation) {
