@@ -689,24 +689,34 @@ CoreArbiterServer::threadBlocking(int socket) {
             // This process previously had a thread preempted and moved to the
             // unmanaged core, but now that it has complied we can move its
             // thread back onto a managed core.
-            struct ThreadInfo* unmanagedThread = *(runningPreemptedSet.begin());
-            LOG(DEBUG,
-                "Moving previously preempted thread %d back to "
-                "managed core\n",
-                unmanagedThread->id);
-            moveThreadToManagedCore(unmanagedThread, core);
-            process->stats->unpreemptedCount++;
-            shouldDistributeCores = false;
+            for (struct ThreadInfo* unmanagedThread : runningPreemptedSet) {
+                if (unmanagedThread->corePreemptedFrom != core)
+                    continue;
+                LOG(DEBUG,
+                        "Moving previously preempted thread %d back to "
+                        "managed core\n",
+                        unmanagedThread->id);
+                process->coresPreemptedFrom.erase(core);
+                unmanagedThread->corePreemptedFrom = NULL;
+                moveThreadToManagedCore(unmanagedThread, core);
+                process->stats->unpreemptedCount++;
+                shouldDistributeCores = false;
+                break;
+            }
         }
     } else if (thread->state == RUNNING_MANAGED && !processOwesCore) {
         // This process has not been asked to release a core, so don't
         // allow it to block.
+        // TODO: How exactly does returning here prevent it from blocking on a
+        // subsequent socket read?
         LOG(WARNING, "Thread %d should not be blocking", thread->id);
         return;
     } else if (thread->state == RUNNING_PREEMPTED && processOwesCore) {
         LOG(DEBUG, "Preempted thread %d is blocking", thread->id);
         process->coreReleaseCount++;
         process->stats->unpreemptedCount++;
+        process->coresPreemptedFrom.erase(thread->corePreemptedFrom);
+        thread->corePreemptedFrom = NULL;
         shouldDistributeCores = false;
     } else if (thread->state == RUNNING_PREEMPTED && !processOwesCore) {
         LOG(ERROR,
@@ -714,6 +724,7 @@ CoreArbiterServer::threadBlocking(int socket) {
             "process does not owe a core.\n",
             thread->id);
         process->stats->unpreemptedCount++;
+        abort();
     }
 
     changeThreadState(thread, BLOCKED);
@@ -847,9 +858,17 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
 
     // Remove the thread we requested preemption on from its managed core.
     struct ThreadInfo* thread = timer->coreInfo->managedThread;
+    // It is quite possible that the thread this particular timer fired on is
+    // not the same thread that failed to release a core.
     if (thread) {
-        // It is quite possible that the thread this particular timer fired on
-        // is not the same thread that failed to release a core.
+        // Keep around the original core that a thread was preempted from to ensure
+        // that it is restored to this core when it is unpreempted.
+        thread->corePreemptedFrom = thread->core;
+        // Track at the process level the cores that have threads preempted from
+        // them, so that another thread from the same process does not get
+        // scheduled onto the core.
+        thread->process->coresPreemptedFrom.insert(thread->core);
+
         removeThreadFromManagedCore(thread);
         changeThreadState(thread, RUNNING_PREEMPTED);
         process->stats->preemptedCount++;
@@ -907,11 +926,14 @@ CoreArbiterServer::cleanupConnection(int socket) {
             process->stats->coreReleaseRequestCount) {
             process->coreReleaseCount++;
             process->stats->unpreemptedCount++;
+            process->coresPreemptedFrom.erase(thread->corePreemptedFrom);
+            thread->corePreemptedFrom = NULL;
         } else {
             LOG(WARNING,
                 "Inconsistent state. Process %d has a preempted "
                 "thread but does not owe a core\n",
                 process->id);
+            abort();
         }
     }
 
@@ -1209,6 +1231,43 @@ CoreArbiterServer::distributeCores() {
         }
     }
 
+    // First restore all previously preempted threads among the
+    // threadsToReceiveCores and ensure that they are satisfied.
+    for (auto it = threadsToReceiveCores.begin(); it != threadsToReceiveCores.end();) {
+        ThreadInfo* thread = *it;
+        if (thread->corePreemptedFrom == NULL) {
+            it++;
+            continue;
+        }
+        // Check if the desired core is among the available managed cores. If so, then claim it immediately.
+        // In either case, remove it from threadsToReceiveCores.
+        auto availableCoresIt = std::find(availableManagedCores.begin(), availableManagedCores.end(), thread->corePreemptedFrom);
+        if (availableCoresIt != availableManagedCores.end()) {
+            CoreInfo* core = thread->corePreemptedFrom;
+            struct ProcessInfo* process = thread->process;
+            LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
+                    thread->id, process->id);
+            process->stats->threadCommunicationBlocks[core->id]
+                .coreReleaseRequested = false;
+
+            // Move the thread before waking it up so that it wakes up in its
+            // new cpuset
+            if (!moveThreadToManagedCore(thread, core)) {
+                // We were probably unable to move this thread to a managed
+                // core because it has exited. To handle this case, it is
+                // easiest to leave this core unoccupied for now, since we will
+                // receive a hangup message from the thread's socket at which
+                // point distributeCores() will be called again and this core
+                // will be filled.
+                LOG(DEBUG,
+                        "Skipping assignment of core %d because were were "
+                        "unable to write to it\n",
+                        core->id);
+            }
+            availableManagedCores.erase(availableCoresIt);
+        }
+        it = threadsToReceiveCores.erase(it);
+    }
     // TODO: Consider all cores; currently there is an explicit set of managed
     // vs unmanaged cores, and the managed core set is too small.
     // Somehow we need to consider all cores when we decide what to do.
@@ -1220,6 +1279,15 @@ CoreArbiterServer::distributeCores() {
 
         struct ProcessInfo* process = thread->process;
         CoreInfo* core = findGoodCoreForProcess(process, availableManagedCores);
+
+        // Refuse to take cores which threads were previously booted from.
+        while (process->coresPreemptedFrom.find(core) != process->coresPreemptedFrom.end()) {
+            LOG(WARNING,
+                   "Skipping over core %d which was previously preempted from.",
+                   core->id);
+            core = findGoodCoreForProcess(process, availableManagedCores);
+            // TODO: Add a check to break out if we're out of cores.
+        }
 
         LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
             thread->id, process->id);

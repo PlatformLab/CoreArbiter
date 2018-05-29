@@ -154,6 +154,11 @@ class CoreArbiterServer {
         // thread is not running on a managed core.
         struct CoreInfo* core;
 
+        // A pointer to the managed core this thread was running before it was
+        // preempted. If this thread becomes unpreempted before it blocks, it
+        // must return to this core.
+        struct CoreInfo* corePreemptedFrom;
+
         // The current state of this thread. When a thread first registers it
         // is assumed to be RUNNING_UNMANAGED.
         ThreadState state;
@@ -165,6 +170,7 @@ class CoreArbiterServer {
               process(process),
               socket(socket),
               core(NULL),
+              corePreemptedFrom(NULL),
               state(RUNNING_UNMANAGED) {}
     };
 
@@ -188,6 +194,12 @@ class CoreArbiterServer {
         // A pointer to shared memory that is used to communicate information
         // to this process.
         struct ProcessStats* stats;
+
+        // The set of cores that threads belonging to this process have been
+        // timeout-preempted from. We must ensure that no threads from this
+        // process are scheduled onto this core until the preempted thread
+        // blocks and can be assigned a new core.
+        std::unordered_set<CoreInfo*> coresPreemptedFrom;
 
         // A monotonically increasing counter of the number of cores this
         // process has owned and then released.

@@ -274,6 +274,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
                                        server.managedCores[0]);
     ThreadInfo* thread2 = createThread(server, threadId2, process, socket2,
                                        CoreArbiterServer::RUNNING_PREEMPTED);
+    thread2->corePreemptedFrom = server.managedCores[0];
 
     // When a process with a preempted thread gives up an managed core, the
     // preempted thread should be moved back to that core
