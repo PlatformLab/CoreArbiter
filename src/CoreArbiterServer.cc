@@ -880,7 +880,7 @@ CoreArbiterServer::cleanupConnection(int socket) {
 
     // Update state pertaining to cores
     if (thread->state == RUNNING_MANAGED) {
-        managedThreads.erase(thread);
+        managedThreads.erase(std::remove(managedThreads.begin(), managedThreads.end(), thread), managedThreads.end());
         thread->core->managedThread = NULL;
         thread->core->threadRemovalTime = Cycles::rdtsc();
         process->stats->numOwnedCores--;
@@ -1721,7 +1721,7 @@ CoreArbiterServer::moveThreadToManagedCore(struct ThreadInfo* thread,
     changeThreadState(thread, RUNNING_MANAGED);
     thread->core = core;
     core->managedThread = thread;
-    managedThreads.insert(thread);
+    managedThreads.push_back(thread);
     thread->process->stats->numOwnedCores++;
     stats->numUnoccupiedCores--;
 
@@ -1779,7 +1779,7 @@ CoreArbiterServer::removeThreadFromManagedCore(struct ThreadInfo* thread,
     thread->core->managedThread = NULL;
     thread->core->threadRemovalTime = Cycles::rdtsc();
     thread->core = NULL;
-    managedThreads.erase(thread);
+    managedThreads.erase(std::remove(managedThreads.begin(), managedThreads.end(), thread), managedThreads.end());
 
     stats->numUnoccupiedCores++;
 }

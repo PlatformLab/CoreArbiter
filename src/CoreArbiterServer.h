@@ -344,7 +344,7 @@ class CoreArbiterServer {
     uint64_t cpusetUpdateTimeout;
 
     // The set of the threads currently running on cores in managedCores.
-    std::unordered_set<struct ThreadInfo*> managedThreads;
+    std::vector<struct ThreadInfo*> managedThreads;
 
     // The smallest index in the vector is the highest priority and the first
     // entry in the deque is the next process that should receive a core at

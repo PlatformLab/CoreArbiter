@@ -79,7 +79,7 @@ class CoreArbiterServerTest : public ::testing::Test {
         process->threadStateToSet[state].insert(thread);
         server.threadSocketToInfo[socket] = thread;
         if (state == CoreArbiterServer::RUNNING_MANAGED) {
-            server.managedThreads.insert(thread);
+            server.managedThreads.push_back(thread);
             process->stats->numOwnedCores++;
             thread->core = core;
             core->managedThread = thread;
@@ -433,7 +433,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     // Don't give processes more cores at this priority than they've asked for
     ThreadInfo* removedThread = server.managedCores[0]->managedThread;
     removedThread->process->desiredCorePriorities[7] = 0;
-    server.managedThreads.erase(removedThread);
+    server.managedThreads.erase(std::remove(server.managedThreads.begin(), server.managedThreads.end(), removedThread));
     server.managedCores[0]->managedThread = NULL;
     server.distributeCores();
     ProcessInfo* otherProcess =
@@ -653,7 +653,7 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
         process->threadStateToSet[CoreArbiterServer::RUNNING_MANAGED].empty());
     ASSERT_EQ(server.threadSocketToInfo.find(1),
               server.threadSocketToInfo.end());
-    ASSERT_EQ(server.managedThreads.find(managedThread),
+    ASSERT_EQ(std::find(server.managedThreads.begin(), server.managedThreads.end(), managedThread),
               server.managedThreads.end());
     ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     ASSERT_EQ(process->stats->numOwnedCores, 0u);
