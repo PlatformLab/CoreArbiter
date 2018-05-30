@@ -966,6 +966,81 @@ CoreArbiterServer::cleanupConnection(int socket) {
 }
 
 /**
+ * Get the core id of the hypertwin of the given core. This code assumes there
+ * is only one such hypertwin on the system it is running on. It also assumes
+that hypertwins are delimited by the comma separator.
+ *
+ * \param coreId
+ *     The coreId whose hypertwin's ID will be returned.
+ */
+int
+getHyperTwin(int coreId) {
+    // This file contains the siblings of core coreId.
+    std::string siblingFilePath = "/sys/devices/system/cpu/cpu" +
+                                  std::to_string(coreId) +
+                                  "/topology/thread_siblings_list";
+    FILE* siblingFile = fopen(siblingFilePath.c_str(), "r");
+    int twin1, twin2;
+    // The first cpuid in the file is always that of the physical core
+    fscanf(siblingFile, "%d,%d", &twin1, &twin2);
+    if (coreId == twin1)
+        return twin2;
+    return twin1;
+}
+
+/**
+ * Find the best core for a given process from the candidate deque, and remove
+ * it from the candidate deque.
+ */
+CoreArbiterServer::CoreInfo*
+CoreArbiterServer::findGoodCoreForProcess(
+    ProcessInfo* process, std::deque<struct CoreInfo*>& candidates) {
+    // Compute the set of cores this process currently has managed threads
+    // on, which may be empty.
+    std::unordered_set<int> coresOwnedByProcess;
+    for (struct ThreadInfo* threadInfo :
+         process->threadStateToSet[RUNNING_MANAGED]) {
+        // We assume managed threads have a core.
+        coresOwnedByProcess.insert(threadInfo->core->id);
+    }
+
+    std::unordered_set<int> availableManagedCoreIds;
+    for (struct CoreInfo* candidate : candidates) {
+        availableManagedCoreIds.insert(candidate->id);
+    }
+    // First look for a core which is the hypertwin of one of this
+    // process's existing cores
+    for (struct CoreInfo* candidate : candidates) {
+        LOG(DEBUG, "Considering candidate %d, hypertwin of %d", candidate->id,
+            getHyperTwin(candidate->id));
+        if (coresOwnedByProcess.find(getHyperTwin(candidate->id)) !=
+            coresOwnedByProcess.end()) {
+            LOG(NOTICE, "candidate %d, hypertwin of %d has been selected",
+                candidate->id, getHyperTwin(candidate->id));
+            candidates.erase(
+                std::find(candidates.begin(), candidates.end(), candidate));
+            return candidate;
+        }
+    }
+
+    // Next look for a core whose hypertwin is also in the set of
+    // available cores.
+    for (struct CoreInfo* candidate : candidates) {
+        if (availableManagedCoreIds.find(getHyperTwin(candidate->id)) !=
+            availableManagedCoreIds.end()) {
+            candidates.erase(
+                std::find(candidates.begin(), candidates.end(), candidate));
+            return candidate;
+        }
+    }
+
+    // Finally, find any available core
+    CoreInfo* core = candidates.front();
+    candidates.pop_front();
+    return core;
+}
+
+/**
  * This method handles all the logic of deciding which threads should receive
  * which cores and actually changing the underlying cpusets, both to scale
  * up/down the number of managed cores and to assign threads to managed cpusets.
@@ -1095,96 +1170,132 @@ CoreArbiterServer::distributeCores() {
         // We need to make more cores managed
         size_t numCoresToMakeManaged = numAssignedCores - managedCores.size();
         LOG(DEBUG, "Making %lu cores managed", numCoresToMakeManaged);
-        managedCores.insert(managedCores.end(),
-                            unmanagedCores.end() - numCoresToMakeManaged,
-                            unmanagedCores.end());
-        unmanagedCores.erase(unmanagedCores.end() - numCoresToMakeManaged,
-                             unmanagedCores.end());
+        // Choose the right cores to make unmanaged, based on the set of
+        // threads to receive cores.
+        // This is the number of already-managed cores that can be used to
+        // service threadsToReceiveCores.
+        uint32_t offset = static_cast<uint32_t>(managedCores.size() -
+                                                threadsAlreadyManaged.size());
+        // The following loop assumes that the set of already-managed cores
+        // which will be considered by threadsToReceiveCores is already a good
+        // set. A more strict calculation would throw out all parts of the
+        // managed core set which do not already have a thread, and reconsider
+        // the additions to the managed core set from scratch.
+        for (uint32_t i = 0; i < numCoresToMakeManaged; i++) {
+            CoreInfo* coreToAdd = findGoodCoreForProcess(
+                threadsToReceiveCores[i + offset]->process, unmanagedCores);
+            managedCores.push_back(coreToAdd);
+        }
 
         // Update the unmanaged cpuset now so that threads it will be updated
         // by the time we wake up managed threads
         updateUnmanagedCpuset();
     }
 
-    // Assign cores to threads
+    // Extract the subset of managedCores that do not have a managedThread
+    // under the current distribution, as well as the subset of managedCores
+    // that have a premptible thread on them.
+    std::deque<struct CoreInfo*> availableManagedCores;
+    std::deque<struct CoreInfo*> preemptibleManagedCores;
     for (struct CoreInfo* core : managedCores) {
-        if (!core->managedThread && !threadsToReceiveCores.empty()) {
-            // This core is available. Give it to a thread not already on
-            // a core.
-            struct ThreadInfo* thread = threadsToReceiveCores.front();
-            threadsToReceiveCores.pop_front();
-            struct ProcessInfo* process = thread->process;
-
-            LOG(NOTICE, "Granting core %d to thread %d from process %d",
-                core->id, thread->id, process->id);
-
-            // Ensure that the new thread is not preempted immediately due to
-            // stale state left behind by a previously preempted thread from
-            // the same process.
-            process->stats->threadCommunicationBlocks[core->id]
-                .coreReleaseRequested = false;
-
-            // Move the thread before waking it up so that it wakes up in its
-            // new cpuset
-            ThreadState prevState = thread->state;
-            if (!moveThreadToManagedCore(thread, core)) {
-                // We were probably unable to move this thread to a managed
-                // core because it has exited. To handle this case, it is
-                // easiest to leave this core unoccupied for now, since we will
-                // receive a hangup message from the thread's socket at which
-                // point distributeCores() will be called again and this core
-                // will be filled.
-                LOG(DEBUG,
-                    "Skipping assignment of core %d because were were "
-                    "unable to write to it\n",
-                    core->id);
-                continue;
-            }
-
-            if (prevState == RUNNING_PREEMPTED) {
-                LOG(DEBUG,
-                    "Thread %d was previously running preempted on the "
-                    "unmanaged core\n",
-                    thread->id);
-                process->stats->unpreemptedCount++;
-            } else {
-                // Thread was blocked
-                if (!testingSkipSocketCommunication) {
-                    // Wake up the thread
-                    timeTrace("SERVER: Sending wakeup");
-                    if (!sendData(thread->socket, &core->id, sizeof(int),
-                                  "Error sending core ID to thread " +
-                                      std::to_string(thread->id))) {
-                        if (errno == EPIPE) {
-                            // The system got a broken pipe error, then clean
-                            // up the connection.
-                            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL,
-                                           thread->socket, NULL);
-                            cleanupConnection(thread->socket);
-                        } else {
-                            exit(-1);
-                        }
-                    }
-                    timeTrace("SERVER: Finished sending wakeup");
-                    LOG(DEBUG, "Sent wakeup");
-                }
-
-                process->stats->numBlockedThreads--;
-                LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
-                    process->stats->numBlockedThreads.load());
-            }
-        } else if (threadsAlreadyManaged.find(core->managedThread) !=
+        if (!core->managedThread) {
+            availableManagedCores.push_back(core);
+        } else if (threadsAlreadyManaged.find(core->managedThread) ==
                    threadsAlreadyManaged.end()) {
-            // This thread is supposed to have a core, so do nothing.
+            preemptibleManagedCores.push_back(core);
+        } else {
             LOG(DEBUG, "Keeping thread %d on core %d", core->managedThread->id,
                 core->id);
-        } else if (core->managedThread) {
-            // The thread on this core needs to be preempted. It will be
-            // assigned to a new thread (one of the ones at the end of
-            // threadsToReceiveCores) when the currently running thread blocks
-            // or is demoted in timeoutThreadPreemption
-            requestCoreRelease(core);
         }
+    }
+
+    // TODO: Consider all cores; currently there is an explicit set of managed
+    // vs unmanaged cores, and the managed core set is too small.
+    // Somehow we need to consider all cores when we decide what to do.
+
+    // Go through threads and try to find a core for them.
+    while (!threadsToReceiveCores.empty() && !availableManagedCores.empty()) {
+        struct ThreadInfo* thread = threadsToReceiveCores.front();
+        threadsToReceiveCores.pop_front();
+
+        struct ProcessInfo* process = thread->process;
+        CoreInfo* core = findGoodCoreForProcess(process, availableManagedCores);
+
+        LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
+            thread->id, process->id);
+
+        // Ensure that the new thread is not preempted immediately due to
+        // stale state left behind by a previously preempted thread from
+        // the same process.
+        process->stats->threadCommunicationBlocks[core->id]
+            .coreReleaseRequested = false;
+
+        // Move the thread before waking it up so that it wakes up in its
+        // new cpuset
+        ThreadState prevState = thread->state;
+        if (!moveThreadToManagedCore(thread, core)) {
+            // We were probably unable to move this thread to a managed
+            // core because it has exited. To handle this case, it is
+            // easiest to leave this core unoccupied for now, since we will
+            // receive a hangup message from the thread's socket at which
+            // point distributeCores() will be called again and this core
+            // will be filled.
+            LOG(DEBUG,
+                "Skipping assignment of core %d because were were "
+                "unable to write to it\n",
+                core->id);
+            continue;
+        }
+
+        if (prevState == RUNNING_PREEMPTED) {
+            LOG(DEBUG,
+                "Thread %d was previously running preempted on the "
+                "unmanaged core\n",
+                thread->id);
+            process->stats->unpreemptedCount++;
+        } else {
+            // Thread was blocked
+            if (!testingSkipSocketCommunication) {
+                // Wake up the thread
+                // TimeTrace::record("SERVER: Sending wakeup");
+                if (!sendData(thread->socket, &core->id, sizeof(int),
+                              "Error sending core ID to thread " +
+                                  std::to_string(thread->id))) {
+                    if (errno == EPIPE) {
+                        // The system got a broken pipe error, then clean
+                        // up the connection.
+                        sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, thread->socket,
+                                       NULL);
+                        cleanupConnection(thread->socket);
+                    } else {
+                        exit(-1);
+                    }
+                }
+                // TimeTrace::record("SERVER: Finished sending wakeup\n");
+                LOG(DEBUG, "Sent wakeup");
+            }
+
+            process->stats->numBlockedThreads--;
+            LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
+                process->stats->numBlockedThreads.load());
+        }
+    }
+    // Sanity check; make sure we have enough preemptible cores to cover the
+    // threads that should receive cores.
+    if (preemptibleManagedCores.size() < threadsToReceiveCores.size()) {
+        LOG(ERROR,
+            "Invariant violated: threadsToReceiveCores is not empty, but "
+            "there are no cores to preempt.");
+        abort();
+    }
+
+    // All cores which are preemptible must be preempted; otherwise
+    // applications cannot scale down unless there is competition from other
+    // applications.
+    while (!preemptibleManagedCores.empty()) {
+        struct CoreInfo* core = preemptibleManagedCores.front();
+        preemptibleManagedCores.pop_front();
+        requestCoreRelease(core);
     }
 
     timeTrace("SERVER: Finished core distribution");

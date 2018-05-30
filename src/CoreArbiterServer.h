@@ -229,6 +229,8 @@ class CoreArbiterServer {
     void coresRequested(int socket);
     void timeoutThreadPreemption(int timerFd);
     void cleanupConnection(int socket);
+    CoreInfo* findGoodCoreForProcess(ProcessInfo* process,
+                                     std::deque<struct CoreInfo*>& candidates);
     void distributeCores();
     void requestCoreRelease(struct CoreInfo* core);
 
@@ -304,7 +306,7 @@ class CoreArbiterServer {
     // cpuset. At startup, this vector contains all cores controlled by the
     // arbiter. It shrinks as cores are requested and grows when cores are
     // unused for an extended period.
-    std::vector<struct CoreInfo*> unmanagedCores;
+    std::deque<struct CoreInfo*> unmanagedCores;
 
     // The file used to change which cores belong to the unmanaged cpuset.
     std::ofstream unmanagedCpusetCpus;
