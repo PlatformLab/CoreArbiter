@@ -243,6 +243,7 @@ class CoreArbiterServer {
     void cleanupConnection(int socket);
     CoreInfo* findGoodCoreForProcess(ProcessInfo* process,
                                      std::deque<struct CoreInfo*>& candidates);
+    void wakeupThread(ThreadInfo* thread, CoreInfo* core);
     void distributeCores();
     void requestCoreRelease(struct CoreInfo* core);
 

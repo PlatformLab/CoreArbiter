@@ -211,6 +211,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
 
     // If the server has requested cores back, this call succeeds
     processStats.coreReleaseRequestCount = 1;
+    processStats.threadCommunicationBlocks[server.managedCores[0]->id].coreReleaseRequested = true;
     server.threadBlocking(socket);
     ASSERT_EQ(thread->state, CoreArbiterServer::BLOCKED);
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
@@ -234,9 +235,11 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     int socket = 2;
     ProcessStats processStats;
     processStats.coreReleaseRequestCount = 1;
+    processStats.threadCommunicationBlocks[server.managedCores[0]->id].coreReleaseRequested = true;
     ProcessInfo* process = createProcess(server, processId, &processStats);
     ThreadInfo* thread = createThread(server, threadId, process, socket,
                                       CoreArbiterServer::RUNNING_PREEMPTED);
+    thread->corePreemptedFrom = server.managedCores[0];
 
     // A preempted thread blocking counts as releasing a core
     server.threadBlocking(socket);
@@ -276,12 +279,11 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
                                        CoreArbiterServer::RUNNING_PREEMPTED);
     thread2->corePreemptedFrom = server.managedCores[0];
 
-    // When a process with a preempted thread gives up an managed core, the
-    // preempted thread should be moved back to that core
+    // When a thread blocks without being asked to, it is a no-op.
     server.threadBlocking(socket1);
-    ASSERT_EQ(thread1->state, CoreArbiterServer::BLOCKED);
-    ASSERT_EQ(thread2->state, CoreArbiterServer::RUNNING_MANAGED);
-    ASSERT_EQ(process->coreReleaseCount, 1u);
+    ASSERT_EQ(thread1->state, CoreArbiterServer::RUNNING_MANAGED);
+    ASSERT_EQ(thread2->state, CoreArbiterServer::RUNNING_PREEMPTED);
+    ASSERT_EQ(process->coreReleaseCount, 0);
     ASSERT_EQ(process->stats->numOwnedCores, 1u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;

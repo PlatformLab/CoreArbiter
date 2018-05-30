@@ -666,77 +666,51 @@ CoreArbiterServer::threadBlocking(int socket) {
     struct ThreadInfo* thread = threadSocketToInfo[socket];
     LOG(DEBUG, "Thread %d is blocking", thread->id);
 
+    struct ProcessInfo* process = thread->process;
+    bool shouldDistributeCores = true;
+
     if (thread->state == BLOCKED) {
         LOG(WARNING, "Thread %d was already blocked", thread->id);
         return;
-    }
-
-    struct ProcessInfo* process = thread->process;
-    bool processOwesCore =
-        process->stats->coreReleaseRequestCount > process->coreReleaseCount;
-    bool shouldDistributeCores = true;
-
-    if (thread->state == RUNNING_MANAGED && processOwesCore) {
-        LOG(NOTICE, "Removing thread %d from core %d", thread->id,
-            thread->core->id);
-        process->coreReleaseCount++;
-        struct CoreInfo* core = thread->core;
-        removeThreadFromManagedCore(thread, false);
-
-        auto& runningPreemptedSet =
-            thread->process->threadStateToSet[RUNNING_PREEMPTED];
-        if (!runningPreemptedSet.empty()) {
-            // This process previously had a thread preempted and moved to the
-            // unmanaged core, but now that it has complied we can move its
-            // thread back onto a managed core.
-            for (struct ThreadInfo* unmanagedThread : runningPreemptedSet) {
-                if (unmanagedThread->corePreemptedFrom != core)
-                    continue;
-                LOG(DEBUG,
-                        "Moving previously preempted thread %d back to "
-                        "managed core\n",
-                        unmanagedThread->id);
-                process->coresPreemptedFrom.erase(core);
-                unmanagedThread->corePreemptedFrom = NULL;
-                moveThreadToManagedCore(unmanagedThread, core);
-                process->stats->unpreemptedCount++;
-                shouldDistributeCores = false;
-                break;
-            }
+    } else if (thread->state == RUNNING_UNMANAGED) {
+        // No need to do anything; later code will handle this case
+    } else if (thread->state == RUNNING_MANAGED) {
+        int coreId = thread->core ? thread->core->id : thread->corePreemptedFrom->id;
+        bool coreReleaseRequested =
+            process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested;
+        if (coreReleaseRequested) {
+            LOG(NOTICE, "Removing thread %d from core %d", thread->id, coreId);
+            removeThreadFromManagedCore(thread, false);
+            process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested = false;
+        } else {
+            // This thread has not been asked to release its core, so don't
+            // allow it to block.
+            LOG(WARNING, "Thread %d should not be blocking", thread->id);
+            wakeupThread(thread, thread->core);
+            return;
         }
-    } else if (thread->state == RUNNING_MANAGED && !processOwesCore) {
-        // This process has not been asked to release a core, so don't
-        // allow it to block.
-        // TODO: How exactly does returning here prevent it from blocking on a
-        // subsequent socket read?
-        LOG(WARNING, "Thread %d should not be blocking", thread->id);
-        return;
-    } else if (thread->state == RUNNING_PREEMPTED && processOwesCore) {
+    } else if (thread->state == RUNNING_PREEMPTED) {
+        int coreId = thread->core ? thread->core->id : thread->corePreemptedFrom->id;
+        bool coreReleaseRequested =
+            process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested;
+        if (!coreReleaseRequested) {
+            // If we did not ask for the core back, there should be no reason
+            // for the thread to be in a preempted state.
+            LOG(ERROR, "Thread %d should not be unmanaged, since no core preemption was requested!", thread->id);
+            abort();
+        }
         LOG(DEBUG, "Preempted thread %d is blocking", thread->id);
-        process->coreReleaseCount++;
         process->stats->unpreemptedCount++;
+        process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested = false;
         process->coresPreemptedFrom.erase(thread->corePreemptedFrom);
         thread->corePreemptedFrom = NULL;
         shouldDistributeCores = false;
-    } else if (thread->state == RUNNING_PREEMPTED && !processOwesCore) {
-        LOG(ERROR,
-            "Inconsistent state! Thread %d was preempted, but its "
-            "process does not owe a core.\n",
-            thread->id);
-        process->stats->unpreemptedCount++;
-        abort();
     }
 
+    process->coreReleaseCount++;
     changeThreadState(thread, BLOCKED);
     process->stats->numBlockedThreads++;
 
-    // It is possible that this thread was already preempted from its core.
-    if (thread->core) {
-        // The next thread to occupy this core should not be automatically
-        // preempted.
-        process->stats->threadCommunicationBlocks[thread->core->id]
-            .coreReleaseRequested = false;
-    }
     LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
         process->stats->numBlockedThreads.load());
     if (shouldDistributeCores) {
@@ -1063,6 +1037,26 @@ CoreArbiterServer::findGoodCoreForProcess(
 }
 
 /**
+ * Utility function for waking up a given thread on the specific core.
+ */
+void
+CoreArbiterServer::wakeupThread(ThreadInfo* thread, CoreInfo* core) {
+    if (!sendData(thread->socket, &core->id, sizeof(int),
+                "Error sending core ID to thread " +
+                std::to_string(thread->id))) {
+        if (errno == EPIPE) {
+            // The system got a broken pipe error, then clean
+            // up the connection.
+            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, thread->socket,
+                    NULL);
+            cleanupConnection(thread->socket);
+        } else {
+            exit(-1);
+        }
+    }
+}
+
+/**
  * This method handles all the logic of deciding which threads should receive
  * which cores and actually changing the underlying cpusets, both to scale
  * up/down the number of managed cores and to assign threads to managed cpusets.
@@ -1247,8 +1241,6 @@ CoreArbiterServer::distributeCores() {
             struct ProcessInfo* process = thread->process;
             LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
                     thread->id, process->id);
-            process->stats->threadCommunicationBlocks[core->id]
-                .coreReleaseRequested = false;
 
             // Move the thread before waking it up so that it wakes up in its
             // new cpuset
@@ -1295,8 +1287,10 @@ CoreArbiterServer::distributeCores() {
         // Ensure that the new thread is not preempted immediately due to
         // stale state left behind by a previously preempted thread from
         // the same process.
-        process->stats->threadCommunicationBlocks[core->id]
-            .coreReleaseRequested = false;
+        if (process->stats->threadCommunicationBlocks[core->id].coreReleaseRequested) {
+            LOG(ERROR, "Invariant Violated: Attempted to grant preempted core %d to a thread other than the preempted thread.", core->id);
+            abort();
+        }
 
         // Move the thread before waking it up so that it wakes up in its
         // new cpuset
@@ -1326,19 +1320,7 @@ CoreArbiterServer::distributeCores() {
             if (!testingSkipSocketCommunication) {
                 // Wake up the thread
                 // TimeTrace::record("SERVER: Sending wakeup");
-                if (!sendData(thread->socket, &core->id, sizeof(int),
-                              "Error sending core ID to thread " +
-                                  std::to_string(thread->id))) {
-                    if (errno == EPIPE) {
-                        // The system got a broken pipe error, then clean
-                        // up the connection.
-                        sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, thread->socket,
-                                       NULL);
-                        cleanupConnection(thread->socket);
-                    } else {
-                        exit(-1);
-                    }
-                }
+                wakeupThread(thread, core);
                 // TimeTrace::record("SERVER: Finished sending wakeup\n");
                 LOG(DEBUG, "Sent wakeup");
             }
