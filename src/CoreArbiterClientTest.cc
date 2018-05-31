@@ -16,8 +16,8 @@
 #define private public
 #define protected public
 
-#include "ArbiterClientShim.h"
 #include "CoreArbiterClient.h"
+#include "ArbiterClientShim.h"
 #include "Logger.h"
 #include "MockSyscall.h"
 

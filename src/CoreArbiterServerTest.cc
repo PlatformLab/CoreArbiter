@@ -210,7 +210,8 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     ASSERT_EQ(processStats.numBlockedThreads, 0u);
 
     // If the server has requested cores back, this call succeeds
-    processStats.threadCommunicationBlocks[server.managedCores[0]->id].coreReleaseRequested = true;
+    processStats.threadCommunicationBlocks[server.managedCores[0]->id]
+        .coreReleaseRequested = true;
     server.threadBlocking(socket);
     ASSERT_EQ(thread->state, CoreArbiterServer::BLOCKED);
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
@@ -233,7 +234,8 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     pid_t threadId = 1;
     int socket = 2;
     ProcessStats processStats;
-    processStats.threadCommunicationBlocks[server.managedCores[0]->id].coreReleaseRequested = true;
+    processStats.threadCommunicationBlocks[server.managedCores[0]->id]
+        .coreReleaseRequested = true;
     ProcessInfo* process = createProcess(server, processId, &processStats);
     ThreadInfo* thread = createThread(server, threadId, process, socket,
                                       CoreArbiterServer::RUNNING_PREEMPTED);
@@ -428,7 +430,9 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     // Don't give processes more cores at this priority than they've asked for
     ThreadInfo* removedThread = server.managedCores[0]->managedThread;
     removedThread->process->desiredCorePriorities[7] = 0;
-    server.managedThreads.erase(std::remove(server.managedThreads.begin(), server.managedThreads.end(), removedThread));
+    server.managedThreads.erase(std::remove(server.managedThreads.begin(),
+                                            server.managedThreads.end(),
+                                            removedThread));
     server.managedCores[0]->managedThread = NULL;
     server.distributeCores();
     ProcessInfo* otherProcess =
@@ -478,11 +482,18 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     // Higher priority threads preempt lower priority threads
     highPriorityProcess->desiredCorePriorities[6] = 4;
     server.distributeCores();
-    ASSERT_TRUE(
-            lowPriorityProcess->stats->threadCommunicationBlocks[server.managedCores[0]->id].coreReleaseRequested ||
-            lowPriorityProcess->stats->threadCommunicationBlocks[server.managedCores[1]->id].coreReleaseRequested ||
-            lowPriorityProcess->stats->threadCommunicationBlocks[server.managedCores[2]->id].coreReleaseRequested ||
-            lowPriorityProcess->stats->threadCommunicationBlocks[server.managedCores[3]->id].coreReleaseRequested);
+    ASSERT_TRUE(lowPriorityProcess->stats
+                    ->threadCommunicationBlocks[server.managedCores[0]->id]
+                    .coreReleaseRequested ||
+                lowPriorityProcess->stats
+                    ->threadCommunicationBlocks[server.managedCores[1]->id]
+                    .coreReleaseRequested ||
+                lowPriorityProcess->stats
+                    ->threadCommunicationBlocks[server.managedCores[2]->id]
+                    .coreReleaseRequested ||
+                lowPriorityProcess->stats
+                    ->threadCommunicationBlocks[server.managedCores[3]->id]
+                    .coreReleaseRequested);
     ASSERT_EQ(server.timerFdToInfo.size(), 1u);
     ASSERT_EQ(highPriorityProcess->stats->numOwnedCores, 3u);
 
@@ -651,7 +662,8 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
         process->threadStateToSet[CoreArbiterServer::RUNNING_MANAGED].empty());
     ASSERT_EQ(server.threadSocketToInfo.find(1),
               server.threadSocketToInfo.end());
-    ASSERT_EQ(std::find(server.managedThreads.begin(), server.managedThreads.end(), managedThread),
+    ASSERT_EQ(std::find(server.managedThreads.begin(),
+                        server.managedThreads.end(), managedThread),
               server.managedThreads.end());
     ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     ASSERT_EQ(process->stats->numOwnedCores, 0u);

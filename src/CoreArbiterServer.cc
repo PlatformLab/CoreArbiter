@@ -675,13 +675,16 @@ CoreArbiterServer::threadBlocking(int socket) {
     } else if (thread->state == RUNNING_UNMANAGED) {
         // No need to do anything; later code will handle this case
     } else if (thread->state == RUNNING_MANAGED) {
-        int coreId = thread->core ? thread->core->id : thread->corePreemptedFrom->id;
+        int coreId =
+            thread->core ? thread->core->id : thread->corePreemptedFrom->id;
         bool coreReleaseRequested =
-            process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested;
+            process->stats->threadCommunicationBlocks[coreId]
+                .coreReleaseRequested;
         if (coreReleaseRequested) {
             LOG(NOTICE, "Removing thread %d from core %d", thread->id, coreId);
             removeThreadFromManagedCore(thread, false);
-            process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested = false;
+            process->stats->threadCommunicationBlocks[coreId]
+                .coreReleaseRequested = false;
         } else {
             // This thread has not been asked to release its core, so don't
             // allow it to block.
@@ -690,18 +693,24 @@ CoreArbiterServer::threadBlocking(int socket) {
             return;
         }
     } else if (thread->state == RUNNING_PREEMPTED) {
-        int coreId = thread->core ? thread->core->id : thread->corePreemptedFrom->id;
+        int coreId =
+            thread->core ? thread->core->id : thread->corePreemptedFrom->id;
         bool coreReleaseRequested =
-            process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested;
+            process->stats->threadCommunicationBlocks[coreId]
+                .coreReleaseRequested;
         if (!coreReleaseRequested) {
             // If we did not ask for the core back, there should be no reason
             // for the thread to be in a preempted state.
-            LOG(ERROR, "Thread %d should not be unmanaged, since no core preemption was requested!", thread->id);
+            LOG(ERROR,
+                "Thread %d should not be unmanaged, since no core preemption "
+                "was requested!",
+                thread->id);
             abort();
         }
         LOG(DEBUG, "Preempted thread %d is blocking", thread->id);
         process->stats->unpreemptedCount++;
-        process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested = false;
+        process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested =
+            false;
         process->coresPreemptedFrom.erase(thread->corePreemptedFrom);
         thread->corePreemptedFrom = NULL;
         shouldDistributeCores = false;
@@ -797,7 +806,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
         ssize_t ret = read(timerFd, &time, sizeof(uint64_t));
         if (ret == -1) {
             LOG(ERROR, "Error reading number of expirations of the timer: %s",
-                    strerror(errno));
+                strerror(errno));
             exit(1);
         }
     }
@@ -806,9 +815,9 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
     if (processIdToInfo.find(timer->processId) == processIdToInfo.end()) {
         // This process is no longer registered with the server
         LOG(DEBUG,
-                "Core retrieval timer went off for process %d, which "
-                "is no longer registered with the server",
-                timer->processId);
+            "Core retrieval timer went off for process %d, which "
+            "is no longer registered with the server",
+            timer->processId);
         return;
     }
     struct ProcessInfo* process = processIdToInfo[timer->processId];
@@ -817,18 +826,18 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
     if (!thread || thread->process != process) {
         // This process gave up the core it was supposed to
         LOG(DEBUG,
-                "Core retrieval timer went off for process %d, but process "
-                "already released the core it was supposed to.\n",
-                process->id);
+            "Core retrieval timer went off for process %d, but process "
+            "already released the core it was supposed to.\n",
+            process->id);
         return;
     }
 
     timeTrace("SERVER: Timing out thread preemption");
 
     LOG(DEBUG,
-            "Core retrieval timer went off for process %d. Moving one of "
-            "its threads to the unmanaged core.\n",
-            process->id);
+        "Core retrieval timer went off for process %d. Moving one of "
+        "its threads to the unmanaged core.\n",
+        process->id);
 
     // Remove the thread we requested preemption on from its managed core.
     // Keep around the original core that a thread was preempted from to ensure
@@ -875,7 +884,9 @@ CoreArbiterServer::cleanupConnection(int socket) {
 
     // Update state pertaining to cores
     if (thread->state == RUNNING_MANAGED) {
-        managedThreads.erase(std::remove(managedThreads.begin(), managedThreads.end(), thread), managedThreads.end());
+        managedThreads.erase(
+            std::remove(managedThreads.begin(), managedThreads.end(), thread),
+            managedThreads.end());
         thread->core->managedThread = NULL;
         thread->core->threadRemovalTime = Cycles::rdtsc();
         process->stats->numOwnedCores--;
@@ -1022,14 +1033,13 @@ CoreArbiterServer::findGoodCoreForProcess(
  */
 void
 CoreArbiterServer::wakeupThread(ThreadInfo* thread, CoreInfo* core) {
-    if (!sendData(thread->socket, &core->id, sizeof(int),
-                "Error sending core ID to thread " +
-                std::to_string(thread->id))) {
+    if (!sendData(
+            thread->socket, &core->id, sizeof(int),
+            "Error sending core ID to thread " + std::to_string(thread->id))) {
         if (errno == EPIPE) {
             // The system got a broken pipe error, then clean
             // up the connection.
-            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, thread->socket,
-                    NULL);
+            sys->epoll_ctl(epollFd, EPOLL_CTL_DEL, thread->socket, NULL);
             cleanupConnection(thread->socket);
         } else {
             exit(-1);
@@ -1208,20 +1218,24 @@ CoreArbiterServer::distributeCores() {
 
     // First restore all previously preempted threads among the
     // threadsToReceiveCores and ensure that they are satisfied.
-    for (auto it = threadsToReceiveCores.begin(); it != threadsToReceiveCores.end();) {
+    for (auto it = threadsToReceiveCores.begin();
+         it != threadsToReceiveCores.end();) {
         ThreadInfo* thread = *it;
         if (thread->corePreemptedFrom == NULL) {
             it++;
             continue;
         }
-        // Check if the desired core is among the available managed cores. If so, then claim it immediately.
+        // Check if the desired core is among the available managed cores. If
+        // so, then claim it immediately.
         // In either case, remove it from threadsToReceiveCores.
-        auto availableCoresIt = std::find(availableManagedCores.begin(), availableManagedCores.end(), thread->corePreemptedFrom);
+        auto availableCoresIt =
+            std::find(availableManagedCores.begin(),
+                      availableManagedCores.end(), thread->corePreemptedFrom);
         if (availableCoresIt != availableManagedCores.end()) {
             CoreInfo* core = thread->corePreemptedFrom;
             struct ProcessInfo* process = thread->process;
-            LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
-                    thread->id, process->id);
+            LOG(NOTICE, "Granting core %d to thread %d from process %d",
+                core->id, thread->id, process->id);
 
             // Move the thread before waking it up so that it wakes up in its
             // new cpuset
@@ -1233,9 +1247,9 @@ CoreArbiterServer::distributeCores() {
                 // point distributeCores() will be called again and this core
                 // will be filled.
                 LOG(DEBUG,
-                        "Skipping assignment of core %d because were were "
-                        "unable to write to it\n",
-                        core->id);
+                    "Skipping assignment of core %d because were were "
+                    "unable to write to it\n",
+                    core->id);
             }
             availableManagedCores.erase(availableCoresIt);
         }
@@ -1254,10 +1268,11 @@ CoreArbiterServer::distributeCores() {
         CoreInfo* core = findGoodCoreForProcess(process, availableManagedCores);
 
         // Refuse to take cores which threads were previously booted from.
-        while (process->coresPreemptedFrom.find(core) != process->coresPreemptedFrom.end()) {
+        while (process->coresPreemptedFrom.find(core) !=
+               process->coresPreemptedFrom.end()) {
             LOG(WARNING,
-                   "Skipping over core %d which was previously preempted from.",
-                   core->id);
+                "Skipping over core %d which was previously preempted from.",
+                core->id);
             core = findGoodCoreForProcess(process, availableManagedCores);
             // TODO: Add a check to break out if we're out of cores.
         }
@@ -1268,8 +1283,12 @@ CoreArbiterServer::distributeCores() {
         // Ensure that the new thread is not preempted immediately due to
         // stale state left behind by a previously preempted thread from
         // the same process.
-        if (process->stats->threadCommunicationBlocks[core->id].coreReleaseRequested) {
-            LOG(ERROR, "Invariant Violated: Attempted to grant preempted core %d to a thread other than the preempted thread.", core->id);
+        if (process->stats->threadCommunicationBlocks[core->id]
+                .coreReleaseRequested) {
+            LOG(ERROR,
+                "Invariant Violated: Attempted to grant preempted core %d to a "
+                "thread other than the preempted thread.",
+                core->id);
             abort();
         }
 
@@ -1390,8 +1409,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
         return;
     }
 
-    timerFdToInfo[timerFd] = {
-        process->id, core};
+    timerFdToInfo[timerFd] = {process->id, core};
 
     timeTrace("SERVER: Finished requesting core release");
 }
@@ -1756,7 +1774,9 @@ CoreArbiterServer::removeThreadFromManagedCore(struct ThreadInfo* thread,
     thread->core->managedThread = NULL;
     thread->core->threadRemovalTime = Cycles::rdtsc();
     thread->core = NULL;
-    managedThreads.erase(std::remove(managedThreads.begin(), managedThreads.end(), thread), managedThreads.end());
+    managedThreads.erase(
+        std::remove(managedThreads.begin(), managedThreads.end(), thread),
+        managedThreads.end());
 
     stats->numUnoccupiedCores++;
 }
@@ -1834,8 +1854,7 @@ signalHandler(int signum) {
             if (mostRecentInstance != NULL) {
                 mostRecentInstance->endArbitration();
             }
-        })
-            .detach();
+        }).detach();
     } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
     }
