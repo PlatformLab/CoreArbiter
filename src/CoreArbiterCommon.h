@@ -46,10 +46,6 @@ struct ThreadCommunicationBlock {
  * can write to the shared memory.
  */
 struct ProcessStats {
-    // A monotonically increasing count of the number of cores the server has
-    // requested that a process release in the client object's lifetime.
-    std::atomic<uint64_t> coreReleaseRequestCount;
-
     // A monotonically increasing count of the number of times the server has
     // forceably moved a thread belonging to this process to the unmanaged core
     // because it did not release a core when requested to.
@@ -75,8 +71,7 @@ struct ProcessStats {
     ThreadCommunicationBlock threadCommunicationBlocks[MAX_SUPPORTED_CORES];
 
     ProcessStats()
-        : coreReleaseRequestCount(0),
-          preemptedCount(0),
+        : preemptedCount(0),
           unpreemptedCount(0),
           numBlockedThreads(0),
           numOwnedCores(0) {

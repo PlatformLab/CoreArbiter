@@ -201,10 +201,6 @@ class CoreArbiterServer {
         // blocks and can be assigned a new core.
         std::unordered_set<CoreInfo*> coresPreemptedFrom;
 
-        // A monotonically increasing counter of the number of cores this
-        // process has owned and then released.
-        uint64_t coreReleaseCount;
-
         // How many cores this process desires at each priority level. Smaller
         // indexes mean higher priority.
         std::vector<uint32_t> desiredCorePriorities;
@@ -220,18 +216,16 @@ class CoreArbiterServer {
             : id(id),
               sharedMemFd(sharedMemFd),
               stats(stats),
-              coreReleaseCount(0),
               desiredCorePriorities(NUM_PRIORITIES) {}
     };
 
     /**
-     * A snapshot of the state of a process at the time that a preemption timer
-     * is set. This prevents the server from preempting a thread that was just
-     * asked to yield if the process complied with a prior release request.
+     * Data structure that stores a process and the core it was asked to
+     * relinquish. This prevents the server from preempting a thread that has
+     * already yielded.
      */
     struct TimerInfo {
         pid_t processId;
-        uint64_t coreReleaseRequestCount;
         CoreInfo* coreInfo;
     };
 
