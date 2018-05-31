@@ -33,6 +33,9 @@ server
 # Misc files
 tags
 
+# Vim swap files
+.*.swp
+
 # Generated files
 obj/
 lib/
