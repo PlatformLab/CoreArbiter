@@ -711,6 +711,8 @@ CoreArbiterServer::threadBlocking(int socket) {
         process->stats->unpreemptedCount++;
         process->stats->threadCommunicationBlocks[coreId].coreReleaseRequested =
             false;
+        assert(process->coresPreemptedFrom.find(thread->corePreemptedFrom) !=
+               process->coresPreemptedFrom.end());
         process->coresPreemptedFrom.erase(thread->corePreemptedFrom);
         thread->corePreemptedFrom = NULL;
         shouldDistributeCores = false;
@@ -899,6 +901,8 @@ CoreArbiterServer::cleanupConnection(int socket) {
         shouldDistributeCores = true;
     } else if (thread->state == RUNNING_PREEMPTED) {
         process->stats->unpreemptedCount++;
+        assert(process->coresPreemptedFrom.find(thread->corePreemptedFrom) !=
+               process->coresPreemptedFrom.end());
         process->coresPreemptedFrom.erase(thread->corePreemptedFrom);
         thread->corePreemptedFrom = NULL;
     }
@@ -1273,8 +1277,17 @@ CoreArbiterServer::distributeCores() {
             LOG(WARNING,
                 "Skipping over core %d which was previously preempted from.",
                 core->id);
+            if (availableManagedCores.empty()) {
+                core = NULL;
+                break;
+            }
             core = findGoodCoreForProcess(process, availableManagedCores);
-            // TODO: Add a check to break out if we're out of cores.
+        }
+        // We ran out of cores which are not bespoken for a particular kernel
+        // thread (because said kernel thread was previously preempted and not
+        // yet restored).
+        if (core == NULL) {
+            break;
         }
 
         LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
@@ -1720,6 +1733,14 @@ CoreArbiterServer::moveThreadToManagedCore(struct ThreadInfo* thread,
     thread->process->stats->numOwnedCores++;
     stats->numUnoccupiedCores--;
 
+    if (thread->corePreemptedFrom) {
+        ProcessInfo* process = thread->process;
+        assert(process->coresPreemptedFrom.find(thread->corePreemptedFrom) !=
+               process->coresPreemptedFrom.end());
+        thread->process->coresPreemptedFrom.erase(thread->corePreemptedFrom);
+        thread->corePreemptedFrom = NULL;
+    }
+
     return true;
 }
 
@@ -1854,7 +1875,8 @@ signalHandler(int signum) {
             if (mostRecentInstance != NULL) {
                 mostRecentInstance->endArbitration();
             }
-        }).detach();
+        })
+            .detach();
     } else if ((signum == SIGSEGV) || (signum == SIGABRT)) {
         invokeGDB(signum);
     }

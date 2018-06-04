@@ -240,6 +240,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     ThreadInfo* thread = createThread(server, threadId, process, socket,
                                       CoreArbiterServer::RUNNING_PREEMPTED);
     thread->corePreemptedFrom = server.managedCores[0];
+    process->coresPreemptedFrom.insert(server.managedCores[0]);
 
     // A preempted thread blocking counts as releasing a core
     server.threadBlocking(socket);
@@ -670,6 +671,8 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     ASSERT_EQ(process->stats->unpreemptedCount, 0u);
     ASSERT_EQ(server.processIdToInfo.size(), 1u);
 
+    preemptedThread->corePreemptedFrom = server.managedCores[0];
+    process->coresPreemptedFrom.insert(server.managedCores[0]);
     server.cleanupConnection(preemptedThread->socket);
     ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_PREEMPTED]
                     .empty());

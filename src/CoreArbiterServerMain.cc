@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "CoreArbiterServer.h"
 #include <string.h>
+#include "CoreArbiterServer.h"
 #include "Logger.h"
 #include "PerfUtils/Util.h"
 
