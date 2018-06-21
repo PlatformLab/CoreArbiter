@@ -789,6 +789,16 @@ CoreArbiterServer::coresRequested(int socket) {
         }
     }
 
+    // Check if flags changed
+    bool willShareLastCore = flags >> 1;
+    bool singleNUMAOnly = flags & 1;
+    if (willShareLastCore != process->willShareLastCore ||
+        singleNUMAOnly != process->singleNUMAOnly) {
+        desiredCoresChanged = true;
+    }
+    process->willShareLastCore = willShareLastCore;
+    process->singleNUMAOnly = singleNUMAOnly;
+
     if (desiredCoresChanged) {
         // Even if the total number of cores this process wants is the same, we
         // may need to shuffle cores around because of priority changes.
