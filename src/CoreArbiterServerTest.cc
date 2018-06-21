@@ -308,6 +308,9 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     // list for every priority
     std::vector<uint32_t> coreRequest = {1, 1, 1, 1, 1, 1, 1, 1};
     send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    int flags = 0;
+    send(clientSocket, &flags, sizeof(int), 0);
+
     server.coresRequested(serverSocket);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 1u);
@@ -318,6 +321,7 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     // number of desired cores
     coreRequest = {2, 2, 2, 2, 2, 2, 2, 2};
     send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    send(clientSocket, &flags, sizeof(int), 0);
     server.coresRequested(serverSocket);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 1u);
@@ -328,6 +332,7 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     // core priority queue
     coreRequest = {2, 2, 2, 2, 1, 1, 1, 1};
     send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    send(clientSocket, &flags, sizeof(int), 0);
     server.coresRequested(serverSocket);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 1u);
@@ -339,6 +344,7 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     processStats.numOwnedCores = 4;
     coreRequest = {0, 0, 0, 0, 0, 0, 0, 0};
     send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    send(clientSocket, &flags, sizeof(int), 0);
     server.coresRequested(serverSocket);
     for (size_t i = 0; i < coreRequest.size(); i++) {
         ASSERT_EQ(server.corePriorityQueues[i].size(), 0u);
