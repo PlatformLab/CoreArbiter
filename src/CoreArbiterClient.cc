@@ -144,6 +144,10 @@ CoreArbiterClient::setRequestedCores(std::vector<uint32_t> numCores,
 
     sendData(serverSocket, &numCores[0], sizeof(uint32_t) * NUM_PRIORITIES,
              "Error sending core request priorities");
+
+    int flags = (willShareLastCore << 1) | singleNUMAOnly;
+    sendData(serverSocket, &flags, sizeof(int),
+             "Error sending core request flags");
 }
 
 /**

@@ -749,6 +749,13 @@ CoreArbiterServer::coresRequested(int socket) {
                   "Error receiving number of cores requested")) {
         return;
     }
+
+    int flags;
+    if (!readData(socket, &flags, sizeof(int),
+                  "Error receiving flags for core request")) {
+        return;
+    }
+
     timeTrace("SERVER: Read number of cores requested");
 
     struct ThreadInfo* thread = threadSocketToInfo[socket];
