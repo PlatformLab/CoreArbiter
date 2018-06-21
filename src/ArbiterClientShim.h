@@ -33,7 +33,9 @@ class ArbiterClientShim : public CoreArbiter::CoreArbiterClient {
   public:
     int blockUntilCoreAvailable();
     bool mustReleaseCore();
-    void setRequestedCores(std::vector<uint32_t> numCores);
+    void setRequestedCores(std::vector<uint32_t> numCores,
+                           bool willShareLastCore = true,
+                           bool singleNUMAOnly = true);
     void unregisterThread();
     void reset() {
         currentRequestedCores = 0;
