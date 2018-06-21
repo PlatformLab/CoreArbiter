@@ -53,7 +53,9 @@ ArbiterClientShim::mustReleaseCore() {
  *     Same as in CoreArbiterClient::setRequestedCores.
  */
 void
-ArbiterClientShim::setRequestedCores(std::vector<uint32_t> numCores) {
+ArbiterClientShim::setRequestedCores(std::vector<uint32_t> numCores,
+                                     bool willShareLastCore,
+                                     bool singleNUMAOnly) {
     uint32_t sum = 0;
     for (uint32_t i : numCores)
         sum += i;

@@ -53,7 +53,9 @@ class CoreArbiterClient {
 
     ~CoreArbiterClient();
 
-    virtual void setRequestedCores(std::vector<uint32_t> numCores);
+    virtual void setRequestedCores(std::vector<uint32_t> numCores,
+                                   bool willShareLastCore = true,
+                                   bool singleNUMAOnly = true);
     virtual bool mustReleaseCore();
     virtual bool threadPreempted();
     virtual int blockUntilCoreAvailable();

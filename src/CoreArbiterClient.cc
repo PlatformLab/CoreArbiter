@@ -108,9 +108,17 @@ CoreArbiterClient::~CoreArbiterClient() {
  *     A vector specifying the number of cores requested at every priority
  *     level. The vector must of NUM_PRIORITIES entries. Lower indexes have
  *     higher priority.
+ * \param willShareLastCore
+ *     True means that this process is willing to share its most recently
+ *     allocated hypertwin with other processes.
+ * \param singleNUMAOnly
+ *     True means that this process should not use cores from more than one
+ *     socket.
  */
 void
-CoreArbiterClient::setRequestedCores(std::vector<uint32_t> numCores) {
+CoreArbiterClient::setRequestedCores(std::vector<uint32_t> numCores,
+                                     bool willShareLastCore,
+                                     bool singleNUMAOnly) {
     timeTrace("CLIENT: setRequestedCores invoked");
     if (numCores.size() != NUM_PRIORITIES) {
         std::string err = "Core request must have " +
