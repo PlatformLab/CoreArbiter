@@ -290,6 +290,56 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
+TEST_F(CoreArbiterServerTest, coresRequested_flags) {
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
+    CoreArbiterServer::testingSkipCoreDistribution = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
+
+    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    makeUnmanagedCoresManaged(server);
+
+    // Create a process taht we will update the requests for.
+    ProcessStats processStats;
+    ProcessInfo* process = createProcess(server, 1, &processStats);
+    createThread(server, 1, process, serverSocket,
+                 CoreArbiterServer::RUNNING_UNMANAGED);
+
+    std::vector<uint32_t> coreRequest = {1, 1, 1, 1, 1, 1, 1, 1};
+
+    send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    int flags = 0;
+    send(clientSocket, &flags, sizeof(int), 0);
+    server.coresRequested(serverSocket);
+
+    ASSERT_FALSE(process->singleNUMAOnly);
+    ASSERT_FALSE(process->willShareLastCore);
+
+    send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    flags = 1;
+    send(clientSocket, &flags, sizeof(int), 0);
+    server.coresRequested(serverSocket);
+
+    ASSERT_TRUE(process->singleNUMAOnly);
+    ASSERT_FALSE(process->willShareLastCore);
+
+    send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    flags = 2;
+    send(clientSocket, &flags, sizeof(int), 0);
+    server.coresRequested(serverSocket);
+
+    ASSERT_FALSE(process->singleNUMAOnly);
+    ASSERT_TRUE(process->willShareLastCore);
+
+    send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
+    flags = 3;
+    send(clientSocket, &flags, sizeof(int), 0);
+    server.coresRequested(serverSocket);
+
+    ASSERT_TRUE(process->singleNUMAOnly);
+    ASSERT_TRUE(process->willShareLastCore);
+}
+
 TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;

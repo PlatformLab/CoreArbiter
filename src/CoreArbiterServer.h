@@ -205,6 +205,14 @@ class CoreArbiterServer {
         // indexes mean higher priority.
         std::vector<uint32_t> desiredCorePriorities;
 
+        // True means that this process is willing to share its last hypertwin
+        // with another process.
+        bool willShareLastCore;
+
+        // True means that this process is unwilling to spread its cores across
+        // multiple CPU sockets.
+        bool singleNUMAOnly;
+
         // A map of ThreadState to the threads this process owns in that state.
         std::unordered_map<ThreadState, std::unordered_set<struct ThreadInfo*>,
                            std::hash<int>>
