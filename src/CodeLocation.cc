@@ -71,7 +71,8 @@ CodeLocation::relativeFile() const {
 std::string
 CodeLocation::qualifiedFunction() const {
     std::string ret;
-    const std::string pattern(format("\\s(?:RAMCloud::)?(\\S*\\b%s)\\(", function));
+    const std::string pattern(
+        format("\\s(?:RAMCloud::)?(\\S*\\b%s)\\(", function));
     if (pcrecpp::RE(pattern).PartialMatch(prettyFunction, &ret))
         return ret;
     else  // shouldn't happen
