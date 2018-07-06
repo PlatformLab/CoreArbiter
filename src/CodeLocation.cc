@@ -49,15 +49,15 @@ CodeLocation::baseFileName() const {
     return lastSlash + 1;
 }
 
-string
+std::string
 CodeLocation::relativeFile() const {
     static int lengthFilePrefix = length__FILE__Prefix();
     // Remove the prefix only if it matches that of __FILE__. This check is
     // needed in case someone compiles different files using different paths.
     if (strncmp(file, __FILE__, lengthFilePrefix) == 0)
-        return string(file + lengthFilePrefix);
+        return std::string(file + lengthFilePrefix);
     else
-        return string(file);
+        return std::string(file);
 }
 
 /**
@@ -68,10 +68,10 @@ CodeLocation::relativeFile() const {
  * Beware: this method is really really slow (10-20 microseconds); we no
  * longer use it in log messages because it wastes so much time.
  */
-string
+std::string
 CodeLocation::qualifiedFunction() const {
-    string ret;
-    const string pattern(format("\\s(?:RAMCloud::)?(\\S*\\b%s)\\(", function));
+    std::string ret;
+    const std::string pattern(format("\\s(?:RAMCloud::)?(\\S*\\b%s)\\(", function));
     if (pcrecpp::RE(pattern).PartialMatch(prettyFunction, &ret))
         return ret;
     else  // shouldn't happen
@@ -91,9 +91,9 @@ format(const char* format, ...) {
 }
 
 /// A safe version of vprintf.
-string
+std::string
 vformat(const char* format, va_list ap) {
-    string s;
+    std::string s;
 
     // We're not really sure how big of a buffer will be necessary.
     // Try 1K, if not the return value will tell us how much is necessary.
