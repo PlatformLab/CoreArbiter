@@ -751,8 +751,7 @@ CoreArbiterServer::coresRequested(int socket) {
     }
     timeTrace("SERVER: Read number of cores requested");
 
-    struct ThreadInfo* thread = threadSocketToInfo[socket];
-    struct ProcessInfo* process = thread->process;
+    struct ProcessInfo* process = threadSocketToInfo[socket]->process;
 
     LOG(DEBUG, "Received core request from process %d:", process->id);
     for (size_t i = 0; i < NUM_PRIORITIES; i++) {
