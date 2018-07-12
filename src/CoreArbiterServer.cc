@@ -1237,7 +1237,7 @@ CoreArbiterServer::distributeCores() {
         if (availableCoresIt != availableManagedCores.end()) {
             CoreInfo* core = thread->corePreemptedFrom;
             struct ProcessInfo* process = thread->process;
-            LOG(NOTICE, "Granting core %d to thread %d from process %d",
+            LOG(NOTICE, "Re-granting core %d to thread %d from process %d",
                 core->id, thread->id, process->id);
 
             // Move the thread before waking it up so that it wakes up in its
