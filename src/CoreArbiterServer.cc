@@ -996,9 +996,7 @@ CoreArbiterServer::findGoodCoreForProcess(
     }
 
     std::unordered_set<int> availableManagedCoreIds;
-    for (struct CoreInfo* candidate : candidates) {
-        availableManagedCoreIds.insert(candidate->id);
-    }
+
     // First look for a core which is the hypertwin of one of this
     // process's existing cores
     for (struct CoreInfo* candidate : candidates) {
@@ -1012,6 +1010,8 @@ CoreArbiterServer::findGoodCoreForProcess(
                 std::find(candidates.begin(), candidates.end(), candidate));
             return candidate;
         }
+
+        availableManagedCoreIds.insert(candidate->id);
     }
 
     // Next look for a core whose hypertwin is also in the set of
