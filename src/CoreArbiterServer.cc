@@ -1258,8 +1258,8 @@ CoreArbiterServer::distributeCores() {
         }
         it = threadsToReceiveCores.erase(it);
     }
-    // TODO: Consider all cores; currently there is an explicit set of managed
-    // vs unmanaged cores, and the managed core set is too small.
+    // TODO(hq6): Consider all cores; currently there is an explicit set of
+    // managed vs unmanaged cores, and the managed core set is too small.
     // Somehow we need to consider all cores when we decide what to do.
 
     // Go through threads and try to find a core for them.
