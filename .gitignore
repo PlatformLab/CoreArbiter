@@ -41,3 +41,7 @@ obj/
 lib/
 include/
 bin/
+
+# Patch files
+*.patch
+*.rej
