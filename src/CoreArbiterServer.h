@@ -29,9 +29,11 @@
 #include <vector>
 
 #include "CoreArbiterCommon.h"
+#include "CoreSegregator.h"
 #include "Logger.h"
 #include "PerfUtils/Cycles.h"
 #include "Syscall.h"
+#include "Topology.h"
 
 #define MAX_EPOLL_EVENTS 1000
 
@@ -55,7 +57,7 @@ namespace CoreArbiter {
 class CoreArbiterServer {
   public:
     CoreArbiterServer(std::string socketPath, std::string sharedMemPathPrefix,
-                      std::vector<int> managedCores = {},
+                      std::vector<int> managedCoreIds = {},
                       bool arbitrateImmediately = true);
     ~CoreArbiterServer();
     void startArbitration();
@@ -66,6 +68,13 @@ class CoreArbiterServer {
     static CoreArbiterServer* volatile mostRecentInstance;
 
   private:
+    // This constructor is called only in tests, to allow for easy dependency
+    // injection of the writes to cpusets, and the topology, including the
+    // hypertwin mapping.
+    CoreArbiterServer(std::string socketPath, std::string sharedMemPathPrefix,
+                      std::vector<int> managedCoreIds, Topology topology,
+                      CoreSegregator* coreSegregator,
+                      bool arbitrateImmediately);
     struct ThreadInfo;
     struct ProcessInfo;
     struct CoreInfo;
@@ -85,6 +94,14 @@ class CoreArbiterServer {
         // NULL otherwise.
         struct ThreadInfo* managedThread;
 
+        // True means that there is an outstanding request to reclaim this
+        // core.
+        bool coreReleaseRequested;
+
+        // A pointer to the thread that owns this core under the current
+        // intended assignment. NULL if this core is unmanaged.
+        ProcessInfo* owner;
+
         // The name of this core's managed cpuset tasks file.
         std::string cpusetFilename;
 
@@ -98,19 +115,11 @@ class CoreArbiterServer {
 
         CoreInfo() : managedThread(NULL) {}
 
-        CoreInfo(int id, std::string managedTasksPath)
+        CoreInfo(int id)
             : id(id),
               managedThread(NULL),
-              cpusetFilename(managedTasksPath),
-              threadRemovalTime(0) {
-            if (!testingSkipCpusetAllocation) {
-                cpusetFile.open(cpusetFilename);
-                if (!cpusetFile.is_open()) {
-                    LOG(ERROR, "Unable to open %s", cpusetFilename.c_str());
-                    exit(-1);
-                }
-            }
-        }
+              coreReleaseRequested(false),
+              threadRemovalTime(0) {}
     };
 
     /**
@@ -199,7 +208,7 @@ class CoreArbiterServer {
         // timeout-preempted from. We must ensure that no threads from this
         // process are scheduled onto this core until the preempted thread
         // blocks and can be assigned a new core.
-        std::unordered_set<CoreInfo*> coresPreemptedFrom;
+        std::unordered_map<CoreInfo*, ThreadInfo*> coresPreemptedFrom;
 
         // How many cores this process desires at each priority level. Smaller
         // indexes mean higher priority.
@@ -210,21 +219,53 @@ class CoreArbiterServer {
         bool willShareLastCore;
 
         // True means that this process is unwilling to spread its cores across
-        // multiple CPU sockets.
+        // multiple NUMA nodes.
         bool singleNUMAOnly;
+
+        // The set of cores that this process owns under the current intended
+        // assignment. It may not be able to actually use these cores until
+        // their former owners have been evicted.
+        std::unordered_set<CoreInfo*> logicallyOwnedCores;
+
+        // The set of cores that this process owns under the current actual
+        // assignment. It is always consistent with the cpusets that are
+        // currently written to Linux.
+        std::vector<CoreInfo*> physicallyOwnedCores;
 
         // A map of ThreadState to the threads this process owns in that state.
         std::unordered_map<ThreadState, std::unordered_set<struct ThreadInfo*>,
                            std::hash<int>>
             threadStateToSet;
 
-        ProcessInfo() : desiredCorePriorities(NUM_PRIORITIES) {}
+        // Get the ID of the socket that
+        int getPreferredSocket(const Topology& t) {
+            // TODO: Decide whether we want to instead prefer a socket with
+            // more free logically cores.
+            if (logicallyOwnedCores.empty())
+                return 0;
+            return t.coreToSocket.at((*logicallyOwnedCores.begin())->id);
+        }
+
+        uint32_t getTotalDesiredCores() {
+            uint32_t total = 0;
+            for (size_t i = 0; i < desiredCorePriorities.size(); i++) {
+                total += desiredCorePriorities[i];
+            }
+            return total;
+        }
+
+        ProcessInfo()
+            : desiredCorePriorities(NUM_PRIORITIES),
+              willShareLastCore(true),
+              singleNUMAOnly(true) {}
 
         ProcessInfo(pid_t id, int sharedMemFd, struct ProcessStats* stats)
             : id(id),
               sharedMemFd(sharedMemFd),
               stats(stats),
-              desiredCorePriorities(NUM_PRIORITIES) {}
+              desiredCorePriorities(NUM_PRIORITIES),
+              willShareLastCore(true),
+              singleNUMAOnly(true) {}
     };
 
     /**
@@ -262,6 +303,15 @@ class CoreArbiterServer {
                                      bool changeCpuset = true);
     void updateUnmanagedCpuset();
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
+
+    bool assignProcessesToSockets(
+        std::deque<ProcessInfo*>& sortedProcesses,
+        const std::unordered_map<struct ProcessInfo*, uint32_t>&
+            processToCoreCount,
+        std::unordered_map<int, uint32_t>& socketToNumCores,
+        std::unordered_map<struct ProcessInfo*, int>& processToSocket);
+
+    void makeCoreAssignmentsConsistent();
 
     void installSignalHandler();
 
@@ -312,6 +362,9 @@ class CoreArbiterServer {
     // Maps process IDs to their associated processes.
     std::unordered_map<pid_t, struct ProcessInfo*> processIdToInfo;
 
+    // Maps the kernel's IDs for cores to our associated data structure.
+    std::unordered_map<int, struct CoreInfo*> coreIdToCore;
+
     // Contains the information about cores that are not currently in the
     // unmanaged cpuset. This vector grows with cores from unmanagedCores when
     // the arbiter is loaded and shrinks when there are fewer cores being used.
@@ -323,16 +376,8 @@ class CoreArbiterServer {
     // unused for an extended period.
     std::deque<struct CoreInfo*> unmanagedCores;
 
-    // The file used to change which cores belong to the unmanaged cpuset.
-    std::ofstream unmanagedCpusetCpus;
-
-    // The file used to change which threads are running on the unmanaged
-    // cpuset.
-    std::ofstream unmanagedCpusetTasks;
-
-    // A comma-delimited string of CPU IDs for cores not under the arbiter's
-    // control.
-    std::string alwaysUnmanagedString;
+    // A list of CPU IDs for cores not under the arbiter's control.
+    std::vector<int> alwaysUnmanagedCores;
 
     // The last time (in cycles) that the unmanaged cpuset's set of cores was
     // updated.
@@ -345,9 +390,6 @@ class CoreArbiterServer {
     // doing so will cause the kernel to throw errors.
     uint64_t cpusetUpdateTimeout;
 
-    // The set of the threads currently running on cores in managedCores.
-    std::vector<struct ThreadInfo*> managedThreads;
-
     // The smallest index in the vector is the highest priority and the first
     // entry in the deque is the next process that should receive a core at
     // that priority.
@@ -357,8 +399,13 @@ class CoreArbiterServer {
     // startArbitration.
     volatile int terminationFd;
 
-    // The path to the root cpuset directory.
-    static std::string cpusetPath;
+    // Used to determine how to allocate cores among applications while
+    // satisfying their NUMA and hypertwin restrictions.
+    Topology topology;
+
+    // Abstraction encapsulating the mechanism for moving cores into different
+    // states.
+    CoreSegregator* coreSegregator;
 
     // Wrap all system calls for easier testing.
     static Syscall* sys;

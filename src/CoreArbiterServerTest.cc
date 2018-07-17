@@ -21,9 +21,12 @@
 #include "MockSyscall.h"
 
 #undef private
+#include "PerfUtils/Util.h"
 #include "gtest/gtest.h"
 
 namespace CoreArbiter {
+
+using PerfUtils::Util::getHyperTwin;
 
 class CoreArbiterServerTest : public ::testing::Test {
   public:
@@ -79,7 +82,6 @@ class CoreArbiterServerTest : public ::testing::Test {
         process->threadStateToSet[state].insert(thread);
         server.threadSocketToInfo[socket] = thread;
         if (state == CoreArbiterServer::RUNNING_MANAGED) {
-            server.managedThreads.push_back(thread);
             process->stats->numOwnedCores++;
             thread->core = core;
             core->managedThread = thread;
@@ -240,7 +242,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     ThreadInfo* thread = createThread(server, threadId, process, socket,
                                       CoreArbiterServer::RUNNING_PREEMPTED);
     thread->corePreemptedFrom = server.managedCores[0];
-    process->coresPreemptedFrom.insert(server.managedCores[0]);
+    process->coresPreemptedFrom[server.managedCores[0]] = thread;
 
     // A preempted thread blocking counts as releasing a core
     server.threadBlocking(socket);
@@ -407,6 +409,77 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
+TEST_F(CoreArbiterServerTest, distributeCores_basics) {
+    // Test Plan: Create two core arbiter clients. Verify that the appropriate
+    // number of non-overlapping cores was granted to each process in each
+    // case below by examining the logicallyOwnedCores in each process.
+    // 1) Request a total number of cores fewer than the number of available
+    // cores. 2) Request a total number of cores larger than the number of
+    // available cores, at equal priority. 3) Request a total number of cores
+    // larger than the number of available cores, at different priorities.
+    CoreArbiterServer::testingSkipCpusetAllocation = true;
+    CoreArbiterServer::testingSkipSocketCommunication = true;
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, false);
+
+    // Set up two processes
+    std::vector<ProcessInfo*> processes;
+    for (int i = 0; i < 2; i++) {
+        ProcessInfo* process = createProcess(server, i, new ProcessStats());
+        processes.push_back(process);
+        // Create enough threads to support different cases relative to the
+        // total number of cores available.
+        for (int j = 0; j < 5; j++) {
+            createThread(server, j, process, j, CoreArbiterServer::BLOCKED);
+        }
+    }
+
+    server.corePriorityQueues[1].push_back(processes[0]);
+    server.corePriorityQueues[1].push_back(processes[1]);
+    // Collection of satisfiable requests.
+    processes[0]->desiredCorePriorities[1] = 2;
+    processes[1]->desiredCorePriorities[1] = 1;
+
+    server.distributeCores();
+    EXPECT_EQ(2, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1, processes[1]->logicallyOwnedCores.size());
+    auto it = processes[0]->logicallyOwnedCores.begin();
+    int core1 = (*it)->id;
+    it++;
+    int core2 = (*it)->id;
+    printf("Core1 = %d, Core2 = %d\n", core1, core2);
+    EXPECT_EQ(core1, getHyperTwin(core2));
+
+    // Make sure we don't get more cores than we asked for, just because more
+    // are available.
+    processes[0]->desiredCorePriorities[1] = 1;
+    processes[1]->desiredCorePriorities[1] = 1;
+
+    server.distributeCores();
+    EXPECT_EQ(1, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1, processes[1]->logicallyOwnedCores.size());
+
+    // Requesting more than the cores we have
+    processes[0]->desiredCorePriorities[1] = 4;
+    processes[1]->desiredCorePriorities[1] = 2;
+
+    server.distributeCores();
+    EXPECT_EQ(2, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1, processes[1]->logicallyOwnedCores.size());
+
+    CoreArbiterServer::testingSkipCpusetAllocation = false;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
+    CoreArbiterServer::testingDoNotChangeManagedCores = false;
+    // TODO: Add debug logging (RC Style) to examine the internals of the
+    // client queues.
+}
+TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
+    // Test Plan: Create three core arbiter clients, and a topology with two
+    // NUMANode. Verify that the appropriate core allocation was granted to
+    // each process in each case below by examining the logicallyOwnedCores in
+    // each process.
+}
+
 TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
@@ -428,7 +501,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     processes[1]->desiredCorePriorities[7] = 2;
 
     server.distributeCores();
-    ASSERT_TRUE(server.managedThreads.empty());
     for (CoreInfo* core : server.managedCores) {
         ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     }
@@ -465,7 +537,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
 
     // Cores are shared evenly among nice to have threads of the same priority.
     server.distributeCores();
-    ASSERT_EQ(server.managedThreads.size(), 2u);
     ASSERT_EQ(processes[0]->stats->numOwnedCores, 1u);
     ASSERT_EQ(processes[1]->stats->numOwnedCores, 1u);
     std::unordered_map<CoreInfo*, ThreadInfo*> savedCoreToThread;
@@ -477,7 +548,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     // Threads already running on a managed core are given priority over blocked
     // ones in core distribution.
     server.distributeCores();
-    ASSERT_EQ(server.managedThreads.size(), 2u);
     ASSERT_EQ(processes[0]->stats->numOwnedCores, 1u);
     ASSERT_EQ(processes[1]->stats->numOwnedCores, 1u);
     for (CoreInfo* core : server.managedCores) {
@@ -487,14 +557,10 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     // Don't give processes more cores at this priority than they've asked for
     ThreadInfo* removedThread = server.managedCores[0]->managedThread;
     removedThread->process->desiredCorePriorities[7] = 0;
-    server.managedThreads.erase(std::remove(server.managedThreads.begin(),
-                                            server.managedThreads.end(),
-                                            removedThread));
     server.managedCores[0]->managedThread = NULL;
     server.distributeCores();
     ProcessInfo* otherProcess =
         removedThread->process == processes[0] ? processes[1] : processes[0];
-    ASSERT_EQ(server.managedThreads.size(), 2u);
     ASSERT_EQ(otherProcess->stats->numOwnedCores, 2u);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
@@ -532,7 +598,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
 
     // Higher priorities are assigned before lower priorities
     server.distributeCores();
-    ASSERT_EQ(server.managedThreads.size(), 4u);
     ASSERT_EQ(highPriorityProcess->stats->numOwnedCores, 3u);
     ASSERT_EQ(lowPriorityProcess->stats->numOwnedCores, 1u);
 
@@ -719,16 +784,13 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
         process->threadStateToSet[CoreArbiterServer::RUNNING_MANAGED].empty());
     ASSERT_EQ(server.threadSocketToInfo.find(1),
               server.threadSocketToInfo.end());
-    ASSERT_EQ(std::find(server.managedThreads.begin(),
-                        server.managedThreads.end(), managedThread),
-              server.managedThreads.end());
     ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     ASSERT_EQ(process->stats->numOwnedCores, 0u);
     ASSERT_EQ(process->stats->unpreemptedCount, 0u);
     ASSERT_EQ(server.processIdToInfo.size(), 1u);
 
     preemptedThread->corePreemptedFrom = server.managedCores[0];
-    process->coresPreemptedFrom.insert(server.managedCores[0]);
+    process->coresPreemptedFrom[server.managedCores[0]] = preemptedThread;
     server.cleanupConnection(preemptedThread->socket);
     ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_PREEMPTED]
                     .empty());

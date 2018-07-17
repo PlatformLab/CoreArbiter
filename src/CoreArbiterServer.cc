@@ -24,17 +24,19 @@
 #include <thread>
 
 #include "CoreArbiterServer.h"
+#include "CpusetCoreSegregator.h"
 #include "PerfUtils/TimeTrace.h"
 #include "PerfUtils/Util.h"
+#include "Topology.h"
 
 using PerfUtils::TimeTrace;
+using PerfUtils::Util::containerToUnorderedSet;
+using PerfUtils::Util::getHyperTwin;
 
 // Uncomment the following line to enable time traces.
 // #define TIME_TRACE 1
 
 namespace CoreArbiter {
-
-std::string CoreArbiterServer::cpusetPath = "/sys/fs/cgroup/cpuset";
 
 static Syscall defaultSyscall;
 Syscall* CoreArbiterServer::sys = &defaultSyscall;
@@ -62,11 +64,9 @@ timeTrace(const char* format, uint64_t arg0 = 0, uint64_t arg1 = 0,
 /**
  * Constructs a CoreArbiterServer object and sets up all necessary state for
  * server operation. This includes creating a socket to listen for new
- * connections on the socket path and creating subdirectories in the
- * /sys/fs/cgroup/cpuset directory for each managed core ID given. Creating
- * a new server will delete all cpuset state left over from a previous server.
- * The server must be run as root; this constraint is enforced before any
- * state in the filesystem is established.
+ * connections on the socket path and performing setup to move threads between
+ * cores. The server must be run as root; this constraint is enforced before
+ * any state in the filesystem is established.
  *
  * If the optional arbitrateImmediately flag is set, this constructor will not
  * return. Instead, the server will immediately start listening for client
@@ -94,6 +94,16 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
                                      std::vector<int> managedCoreIds,
                                      bool arbitrateImmediately)
+    : CoreArbiterServer(socketPath, sharedMemPathPrefix, managedCoreIds,
+                        Topology(containerToUnorderedSet(managedCoreIds)),
+                        new CpusetCoreSegregator(), arbitrateImmediately) {}
+
+CoreArbiterServer::CoreArbiterServer(std::string socketPath,
+                                     std::string sharedMemPathPrefix,
+                                     std::vector<int> managedCoreIds,
+                                     Topology topology,
+                                     CoreSegregator* coreSegregator,
+                                     bool arbitrateImmediately)
     : socketPath(socketPath),
       listenSocket(-1),
       sharedMemPathPrefix(sharedMemPathPrefix),
@@ -103,10 +113,12 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
       advisoryLockFd(-1),
       epollFd(-1),
       preemptionTimeout(RELEASE_TIMEOUT_MS),
-      alwaysUnmanagedString(""),
+      alwaysUnmanagedCores(),
       cpusetUpdateTimeout(CPUSET_UPDATE_TIMEOUT_MS),
       corePriorityQueues(NUM_PRIORITIES),
-      terminationFd(eventfd(0, 0)) {
+      terminationFd(eventfd(0, 0)),
+      topology(topology),
+      coreSegregator(coreSegregator) {
     if (sys->geteuid()) {
         LOG(ERROR, "The core arbiter server must be run as root");
         exit(-1);
@@ -142,73 +154,30 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             for (int id = 1; id < static_cast<int>(numCores); id++) {
                 managedCoreIds.push_back(id);
             }
-            alwaysUnmanagedString = "0,";
+            alwaysUnmanagedCores.push_back(0);
         } else {
-            alwaysUnmanagedString = "";
+            // Build the alwaysUnmanagedCores to include all cores which are
+            // not specified in managedCoreIds, thereby ensuring that the
+            // non-managed threads can always run on all of these cores. If the
+            // application specifies core 0 as one of the managed cores, then
+            // this code will exclude it from the alwaysUnmanagedCores.
+            alwaysUnmanagedCores.clear();
             std::sort(managedCoreIds.begin(), managedCoreIds.end());
             size_t idx = 0;
             for (int i = 0; i < static_cast<int>(numCores); i++) {
                 if (idx < managedCoreIds.size() && managedCoreIds[idx] == i) {
                     idx++;
                 } else {
-                    alwaysUnmanagedString += std::to_string(i) + ",";
+                    alwaysUnmanagedCores.push_back(i);
                 }
             }
         }
     }
 
-    std::string arbiterCpusetPath = cpusetPath + "/CoreArbiter";
-    if (!testingSkipCpusetAllocation) {
-        // Remove any old cpusets from a previous server
-        removeOldCpusets(arbiterCpusetPath);
-
-        // Create a new cpuset directory for core arbitration. Since this is
-        // going to be a parent of all the arbiter's individual core cpusets, it
-        // needs to include every core.
-        std::string allCores = "0-" + std::to_string(numCores - 1);
-        createCpuset(arbiterCpusetPath, allCores, "0");
-
-        // Set up managed cores
-        for (int core : managedCoreIds) {
-            std::string managedCpusetPath =
-                arbiterCpusetPath + "/Managed" + std::to_string(core);
-            createCpuset(managedCpusetPath, std::to_string(core), "0");
-        }
-
-        // Set up the unmanaged cpuset. This starts with all cores and is
-        // scaled down as processes ask for managed cores.
-        std::string unmanagedCpusetPath = arbiterCpusetPath + "/Unmanaged";
-        createCpuset(unmanagedCpusetPath, allCores, "0");
-
-        // Move all of the currently running processes to the unmanaged cpuset
-        std::string allProcsPath = cpusetPath + "/cgroup.procs";
-        std::string unmanagedProcsPath = unmanagedCpusetPath + "/cgroup.procs";
-        moveProcsToCpuset(allProcsPath, unmanagedProcsPath);
-
-        // Set up the file we will use to control how many cores are in the
-        // unmanaged cpuset.
-        std::string unmanagedCpusPath = unmanagedCpusetPath + "/cpuset.cpus";
-        unmanagedCpusetCpus.open(unmanagedCpusPath);
-        if (!unmanagedCpusetCpus.is_open()) {
-            LOG(ERROR, "Unable to open %s", unmanagedCpusPath.c_str());
-            exit(-1);
-        }
-
-        // Set up the file we will use to control which threads are in the
-        // unmanaged cpuset.
-        std::string unmanagedTasksPath = unmanagedCpusetPath + "/tasks";
-        unmanagedCpusetTasks.open(unmanagedTasksPath);
-        if (!unmanagedCpusetTasks.is_open()) {
-            LOG(ERROR, "Unable to open %s", unmanagedTasksPath.c_str());
-            exit(-1);
-        }
-    }
-
     for (int coreId : managedCoreIds) {
-        std::string managedTasksPath =
-            arbiterCpusetPath + "/Managed" + std::to_string(coreId) + "/tasks";
-        struct CoreInfo* core = new CoreInfo(coreId, managedTasksPath);
+        struct CoreInfo* core = new CoreInfo(coreId);
         unmanagedCores.push_back(core);
+        coreIdToCore[coreId] = core;
     }
 
     ensureParents(socketPath.c_str(), 0777);
@@ -331,7 +300,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
 /**
  * In addition to cleaning up memory and closing file descriptors, when
  * deconstructed the CoreArbiterServer removes the socket file that it was
- * listening for connections on and removes all cpusets it established.
+ * listening for connections on.
  */
 CoreArbiterServer::~CoreArbiterServer() {
 #if TIME_TRACE
@@ -340,11 +309,6 @@ CoreArbiterServer::~CoreArbiterServer() {
 #endif
 
     if (!testingSkipMemoryDeallocation) {
-        for (struct CoreInfo* core : managedCores) {
-            core->cpusetFile.close();
-            delete core;
-        }
-
         for (auto& proccessIdAndInfo : processIdToInfo) {
             struct ProcessInfo* process = proccessIdAndInfo.second;
             for (auto& threadStateAndSet : process->threadStateToSet) {
@@ -369,8 +333,6 @@ CoreArbiterServer::~CoreArbiterServer() {
     if (remove(socketPath.c_str()) != 0) {
         LOG(ERROR, "Error deleting socket file: %s", strerror(errno));
     }
-
-    removeOldCpusets(cpusetPath + "/CoreArbiter");
 
     if (mostRecentInstance == this)
         mostRecentInstance = NULL;
@@ -492,7 +454,6 @@ CoreArbiterServer::handleEvents() {
     msSinceLastCpusetUpdate =
         Cycles::toMilliseconds(Cycles::rdtsc() - unmanagedCpusetLastUpdate);
     if (msSinceLastCpusetUpdate >= cpusetUpdateTimeout) {
-        bool cpusetChanged = false;
         uint64_t now = Cycles::rdtsc();
 
         for (auto coreIter = managedCores.begin();
@@ -511,16 +472,11 @@ CoreArbiterServer::handleEvents() {
                 LOG(NOTICE, "Moving core %d to the unmanaged cpuset", core->id);
                 managedCores.erase(coreIter);
                 unmanagedCores.push_back(core);
-                cpusetChanged = true;
             } else {
                 coreIter++;
             }
         }
         unmanagedCpusetLastUpdate = now;
-
-        if (cpusetChanged) {
-            updateUnmanagedCpuset();
-        }
     }
 
     return true;
@@ -656,6 +612,7 @@ CoreArbiterServer::acceptConnection(int listenSocket) {
  */
 void
 CoreArbiterServer::threadBlocking(int socket) {
+    LOG(ERROR, "threadingBlocking called with socket = %d", socket);
     timeTrace("SERVER: Start handling thread blocking request");
 
     if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
@@ -689,7 +646,9 @@ CoreArbiterServer::threadBlocking(int socket) {
             // This thread has not been asked to release its core, so don't
             // allow it to block.
             LOG(WARNING, "Thread %d should not be blocking", thread->id);
-            wakeupThread(thread, thread->core);
+            if (!testingSkipSocketCommunication) {
+                wakeupThread(thread, thread->core);
+            }
             return;
         }
     } else if (thread->state == RUNNING_PREEMPTED) {
@@ -864,7 +823,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
     // Track at the process level the cores that have threads preempted from
     // them, so that another thread from the same process does not get
     // scheduled onto the core.
-    thread->process->coresPreemptedFrom.insert(thread->core);
+    thread->process->coresPreemptedFrom[thread->core] = thread;
 
     removeThreadFromManagedCore(thread);
     changeThreadState(thread, RUNNING_PREEMPTED);
@@ -902,9 +861,6 @@ CoreArbiterServer::cleanupConnection(int socket) {
 
     // Update state pertaining to cores
     if (thread->state == RUNNING_MANAGED) {
-        managedThreads.erase(
-            std::remove(managedThreads.begin(), managedThreads.end(), thread),
-            managedThreads.end());
         thread->core->managedThread = NULL;
         thread->core->threadRemovalTime = Cycles::rdtsc();
         process->stats->numOwnedCores--;
@@ -971,29 +927,6 @@ CoreArbiterServer::cleanupConnection(int socket) {
     if (shouldDistributeCores) {
         distributeCores();
     }
-}
-
-/**
- * Get the core id of the hypertwin of the given core. This code assumes there
- * is only one such hypertwin on the system it is running on. It also assumes
-that hypertwins are delimited by the comma separator.
- *
- * \param coreId
- *     The coreId whose hypertwin's ID will be returned.
- */
-int
-getHyperTwin(int coreId) {
-    // This file contains the siblings of core coreId.
-    std::string siblingFilePath = "/sys/devices/system/cpu/cpu" +
-                                  std::to_string(coreId) +
-                                  "/topology/thread_siblings_list";
-    FILE* siblingFile = fopen(siblingFilePath.c_str(), "r");
-    int twin1, twin2;
-    // The first cpuid in the file is always that of the physical core
-    fscanf(siblingFile, "%d,%d", &twin1, &twin2);
-    if (coreId == twin1)
-        return twin2;
-    return twin1;
 }
 
 /**
@@ -1068,197 +1001,111 @@ CoreArbiterServer::wakeupThread(ThreadInfo* thread, CoreInfo* core) {
 }
 
 /**
- * This method handles all the logic of deciding which threads should receive
- * which cores and actually changing the underlying cpusets, both to scale
- * up/down the number of managed cores and to assign threads to managed cpusets.
- * If a thread needs to be preempted a timer is set and the process is notified
- * that it should release a core, but no changes to the cpuset occur.
- *
- * Threads are assigned to cores based on their priorities. All higher priority
- * requests are granted before lower priorities. Within a priority, cores are
- * split evenly among processes.
+ * Brute-force backtracking to find a working mapping of processes to sockets.
  */
-void
-CoreArbiterServer::distributeCores() {
-    timeTrace("SERVER: Starting core distribution");
-
-    if (testingSkipCoreDistribution) {
-        LOG(DEBUG, "Skipping core distribution");
-        return;
+bool
+CoreArbiterServer::assignProcessesToSockets(
+    std::deque<ProcessInfo*>& sortedProcesses,
+    const std::unordered_map<struct ProcessInfo*, uint32_t>& processToCoreCount,
+    std::unordered_map<int, uint32_t>& socketToNumCores,
+    std::unordered_map<struct ProcessInfo*, int>& processToSocket) {
+    // We have successfully assigned all the processes to sockets
+    if (sortedProcesses.empty()) {
+        return true;
     }
 
-    LOG(DEBUG, "Distributing cores among threads...");
+    ProcessInfo* process = sortedProcesses.front();
+    sortedProcesses.pop_front();
+    uint32_t coresRequired = processToCoreCount.at(process);
 
-    size_t maxManagedCores = managedCores.size() + unmanagedCores.size();
+    // First try to assign to the socket we have affinity for.
+    int candidateSocket = process->getPreferredSocket(topology);
+    if (socketToNumCores[candidateSocket] >= coresRequired) {
+        socketToNumCores[candidateSocket] -= coresRequired;
+        processToSocket[process] = candidateSocket;
+        if (assignProcessesToSockets(sortedProcesses, processToCoreCount,
+                                     socketToNumCores, processToSocket)) {
+            return true;
+        }
+        socketToNumCores[candidateSocket] += coresRequired;
+    }
 
-    // First, find the threads that should receive cores.
-    // This is a queue (front has higher priority) of threads not currently
-    // managed that should be placed on cores
-    std::deque<struct ThreadInfo*> threadsToReceiveCores;
+    // Now try every other socket.
+    for (auto it = socketToNumCores.begin(); it != socketToNumCores.end();
+         it++) {
+        if (it->first == process->getPreferredSocket(topology))
+            continue;
 
-    // Keep track of the threads that are already managed and should remain
-    // so. Threads that will be preempted do not make it into this set.
-    std::unordered_set<struct ThreadInfo*> threadsAlreadyManaged;
+        candidateSocket = it->first;
+        if (it->second >= coresRequired) {
+            it->second -= coresRequired;
+            processToSocket[process] = candidateSocket;
+            if (assignProcessesToSockets(sortedProcesses, processToCoreCount,
+                                         socketToNumCores, processToSocket)) {
+                return true;
+            }
+            socketToNumCores[candidateSocket] += coresRequired;
+        }
+    }
+    // This recursive call did not find a working assignment.
+    return false;
+}
 
-    // Iterate from highest to lowest priority
-    bool coresFilled = false;
-    for (size_t priority = 0;
-         priority < corePriorityQueues.size() && !coresFilled; priority++) {
-        auto& processes = corePriorityQueues[priority];
-        bool threadAdded = true;
+/**
+ * Each invocation of this method attempts to bring actual core assignments
+ * closer to intended core assignments. It writes to cpusets, and sets timers
+ * for preemption.
+ */
+void
+CoreArbiterServer::makeCoreAssignmentsConsistent() {
+    for (auto kvpair : processIdToInfo) {
+        ProcessInfo* process = kvpair.second;
+        // Request preemption on cores which are no longer logically owned.
+        for (CoreInfo* core : process->physicallyOwnedCores) {
+            if (process->logicallyOwnedCores.find(core) ==
+                process->logicallyOwnedCores.end()) {
+                requestCoreRelease(core);
+            }
+        }
 
-        // A running count of how many cores we have assigned to a process at
-        // this priority. This makes it easy to ensure that we don't assign
-        // more cores to a process than it has requested.
-        std::unordered_map<struct ProcessInfo*, uint32_t> processToCoreCount;
-
-        // Any threads that are already managed should remain so at this
-        // priority.
-        for (struct ThreadInfo* thread : managedThreads) {
-            if (threadsAlreadyManaged.find(thread) !=
-                threadsAlreadyManaged.end()) {
+        for (CoreInfo* core : process->logicallyOwnedCores) {
+            if (core->owner == process) {
+                continue;
+            }
+            if (core->owner != NULL) {
+                requestCoreRelease(core);
                 continue;
             }
 
-            struct ProcessInfo* process = thread->process;
-            if (processToCoreCount[process] <
-                process->desiredCorePriorities[priority]) {
-                // We want to keep this thread on its core
-                threadsAlreadyManaged.insert(thread);
-                processToCoreCount[process]++;
-
-                if (threadsToReceiveCores.size() +
-                        threadsAlreadyManaged.size() ==
-                    maxManagedCores) {
-                    coresFilled = true;
-                    break;
-                }
-            }
-        }
-
-        // Add as many blocked threads at this priority level as we can
-        while (threadAdded && !coresFilled) {
-            threadAdded = false;
-
-            // Iterate over every process at this priority level
-            for (size_t i = 0; i < processes.size(); i++) {
-                // Pop off the first processes and put it at the back of the
-                // deque (so that we share cores evenly accross threads at this
-                // priority level)
-                struct ProcessInfo* process = processes.front();
-                processes.pop_front();
-                processes.push_back(process);
-
-                if (processToCoreCount[process] ==
-                    process->desiredCorePriorities[priority]) {
+            // Grant this core to this process. If there was a thread belonging
+            // to this process previously force-preempted from this core, it
+            // should be restored.
+            if (process->coresPreemptedFrom.find(core) !=
+                process->coresPreemptedFrom.end()) {
+                if (moveThreadToManagedCore(process->coresPreemptedFrom[core],
+                                            core)) {
+                    // This core has been granted to the thread that originally
+                    // held it.
                     continue;
                 }
-
-                // Prefer moving preempted threads back to their cores over
-                // blocked threads.
-                std::unordered_set<struct ThreadInfo*>* threadSet =
-                    &(process->threadStateToSet[RUNNING_PREEMPTED]);
-                if (threadSet->empty()) {
-                    threadSet = &(process->threadStateToSet[BLOCKED]);
-                }
-                if (!threadSet->empty()) {
-                    // Choose some blocked thread to put on a core
-                    struct ThreadInfo* thread = *(threadSet->begin());
-                    threadsToReceiveCores.push_back(thread);
-                    processToCoreCount[process]++;
-                    threadAdded = true;
-
-                    // Temporarily remove the thread from the process's set of
-                    // threads so that we don't assign it to a core more than
-                    // once
-                    threadSet->erase(thread);
-
-                    if (threadsToReceiveCores.size() +
-                            threadsAlreadyManaged.size() ==
-                        maxManagedCores) {
-                        coresFilled = true;
-                        break;
-                    }
-                }
             }
-        }
-    }
+            // Choose an arbitrary blocked thread from this process for this
+            // core.
+            std::unordered_set<ThreadInfo*> blockedThreads =
+                process->threadStateToSet[BLOCKED];
 
-    timeTrace("SERVER: Finished deciding which threads to put on cores");
+            // Skip over this core if we have no threads to put on it.
+            if (blockedThreads.empty()) {
+                LOG(ERROR,
+                    "Process %d has requested %d cores, but has run out of "
+                    "blocked threads",
+                    process->id, process->getTotalDesiredCores());
+                continue;
+            }
 
-    // Add threads back to the correct sets in their process
-    for (struct ThreadInfo* thread : threadsToReceiveCores) {
-        thread->process->threadStateToSet[thread->state].insert(thread);
-    }
+            ThreadInfo* thread = *blockedThreads.begin();
+            blockedThreads.erase(thread);
 
-    size_t numAssignedCores =
-        threadsToReceiveCores.size() + threadsAlreadyManaged.size();
-    if (numAssignedCores > managedCores.size()) {
-        // We need to make more cores managed
-        size_t numCoresToMakeManaged = numAssignedCores - managedCores.size();
-        LOG(DEBUG, "Making %lu cores managed", numCoresToMakeManaged);
-        // Choose the right cores to make unmanaged, based on the set of
-        // threads to receive cores.
-        // This is the number of already-managed cores that can be used to
-        // service threadsToReceiveCores.
-        uint32_t offset = static_cast<uint32_t>(managedCores.size() -
-                                                threadsAlreadyManaged.size());
-        // The following loop assumes that the set of already-managed cores
-        // which will be considered by threadsToReceiveCores is already a good
-        // set. A more strict calculation would throw out all parts of the
-        // managed core set which do not already have a thread, and reconsider
-        // the additions to the managed core set from scratch.
-        for (uint32_t i = 0; i < numCoresToMakeManaged; i++) {
-            CoreInfo* coreToAdd = findGoodCoreForProcess(
-                threadsToReceiveCores[i + offset]->process, unmanagedCores);
-            managedCores.push_back(coreToAdd);
-        }
-
-        // Update the unmanaged cpuset now so that threads it will be updated
-        // by the time we wake up managed threads
-        updateUnmanagedCpuset();
-    }
-
-    // Extract the subset of managedCores that do not have a managedThread
-    // under the current distribution, as well as the subset of managedCores
-    // that have a premptible thread on them.
-    std::deque<struct CoreInfo*> availableManagedCores;
-    std::deque<struct CoreInfo*> preemptibleManagedCores;
-    for (struct CoreInfo* core : managedCores) {
-        if (!core->managedThread) {
-            availableManagedCores.push_back(core);
-        } else if (threadsAlreadyManaged.find(core->managedThread) ==
-                   threadsAlreadyManaged.end()) {
-            preemptibleManagedCores.push_back(core);
-        } else {
-            LOG(DEBUG, "Keeping thread %d on core %d", core->managedThread->id,
-                core->id);
-        }
-    }
-
-    // First restore all previously preempted threads among the
-    // threadsToReceiveCores and ensure that they are satisfied.
-    for (auto it = threadsToReceiveCores.begin();
-         it != threadsToReceiveCores.end();) {
-        ThreadInfo* thread = *it;
-        if (thread->corePreemptedFrom == NULL) {
-            it++;
-            continue;
-        }
-        // Check if the desired core is among the available managed cores. If
-        // so, then claim it immediately.
-        // In either case, remove it from threadsToReceiveCores.
-        auto availableCoresIt =
-            std::find(availableManagedCores.begin(),
-                      availableManagedCores.end(), thread->corePreemptedFrom);
-        if (availableCoresIt != availableManagedCores.end()) {
-            CoreInfo* core = thread->corePreemptedFrom;
-            struct ProcessInfo* process = thread->process;
-            LOG(NOTICE, "Re-granting core %d to thread %d from process %d",
-                core->id, thread->id, process->id);
-
-            // Move the thread before waking it up so that it wakes up in its
-            // new cpuset
             if (!moveThreadToManagedCore(thread, core)) {
                 // We were probably unable to move this thread to a managed
                 // core because it has exited. To handle this case, it is
@@ -1271,111 +1118,585 @@ CoreArbiterServer::distributeCores() {
                     "unable to write to it\n",
                     core->id);
             }
-            availableManagedCores.erase(availableCoresIt);
         }
-        it = threadsToReceiveCores.erase(it);
     }
-    // TODO(hq6): Consider all cores; currently there is an explicit set of
-    // managed vs unmanaged cores, and the managed core set is too small.
-    // Somehow we need to consider all cores when we decide what to do.
+}
 
-    // Go through threads and try to find a core for them.
-    while (!threadsToReceiveCores.empty() && !availableManagedCores.empty()) {
-        struct ThreadInfo* thread = threadsToReceiveCores.front();
-        threadsToReceiveCores.pop_front();
+/**
+ * This method handles all the logic of deciding which processes should receive
+ * which cores. It delegates the operations for making actual core assignments
+ * consistent with intended core assignments to
+ * makeCoreAssignmentsConsistent().
+ *
+ * Cores are assigned to processes based on their priorities. All higher
+ * priority requests are granted before lower priorities. Within a priority,
+ * cores are split evenly among processes.
+ */
+void
+CoreArbiterServer::distributeCores() {
+    timeTrace("SERVER: Starting core distribution");
 
-        struct ProcessInfo* process = thread->process;
-        CoreInfo* core = findGoodCoreForProcess(process, availableManagedCores);
+    if (testingSkipCoreDistribution) {
+        LOG(DEBUG, "Skipping core distribution");
+        return;
+    }
 
-        // Refuse to take cores which threads were previously booted from.
-        while (process->coresPreemptedFrom.find(core) !=
-               process->coresPreemptedFrom.end()) {
-            LOG(WARNING,
-                "Skipping over core %d which was previously preempted from.",
-                core->id);
-            if (availableManagedCores.empty()) {
-                core = NULL;
-                break;
+    LOG(DEBUG, "Distributing cores among threads...");
+    size_t maxManagedCores = managedCores.size() + unmanagedCores.size();
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // New implementation starts here
+
+    // Clients desiring cores will be granted in the order they appear in this
+    // queue.
+    std::vector<std::pair<ProcessInfo*, bool>> clientQueue;
+
+    for (size_t priority = 0; priority < corePriorityQueues.size();
+         priority++) {
+        auto processes = corePriorityQueues[priority];
+
+        // A running count of how many cores we have assigned to a process at
+        // this priority. This makes it easy to ensure that we don't assign
+        // more cores to a process than it has requested.
+        std::unordered_map<struct ProcessInfo*, uint32_t> processToCoreCount;
+
+        // Iterate over every process at this priority level and add their
+        // requests to clientQueue
+        while (!processes.empty()) {
+            // Pop off the first processes and put it at the back of the
+            // deque (so that we share cores evenly accross threads at this
+            // priority level)
+            struct ProcessInfo* process = processes.front();
+            processes.pop_front();
+
+            if (processToCoreCount[process] >
+                process->desiredCorePriorities[priority]) {
+                continue;
             }
-            core = findGoodCoreForProcess(process, availableManagedCores);
-        }
-        // We ran out of cores which are not bespoken for a particular kernel
-        // thread (because said kernel thread was previously preempted and not
-        // yet restored).
-        if (core == NULL) {
-            break;
-        }
 
-        LOG(NOTICE, "Granting core %d to thread %d from process %d", core->id,
-            thread->id, process->id);
+            // Only put it back if its requirements are not satisfied already.
+            processes.push_back(process);
+            processToCoreCount[process]++;
+            clientQueue.push_back(std::make_pair(process, false));
 
-        // Ensure that the new thread is not preempted immediately due to
-        // stale state left behind by a previously preempted thread from
-        // the same process.
-        if (process->stats->threadCommunicationBlocks[core->id]
-                .coreReleaseRequested) {
+            // Add an additional core request if a process unwilling to share
+            // its last hypertwin and has requested an odd number of cores.
+            if (processToCoreCount[process] ==
+                    process->desiredCorePriorities[priority] &&
+                !process->willShareLastCore &&
+                (processToCoreCount[process] & 1))
+                clientQueue.push_back(std::make_pair(process, false));
+        }
+    }
+    LOG(ERROR, "ClientQueue.size %zu", clientQueue.size());
+    for (size_t i = 0; i < clientQueue.size(); i++) {
+        LOG(ERROR, "Process %d, satisfied %d, willShareLastCore = %d",
+            clientQueue[i].first->id, clientQueue[i].second,
+            clientQueue[i].first->willShareLastCore);
+    }
+
+    LOG(ERROR, "maxManagedCores = %zu", maxManagedCores);
+    // Compute the number of cores that each process can have, then check
+    // whether hypertwin constraints are satisfied.
+    std::unordered_map<struct ProcessInfo*, uint32_t> processToCoreCount;
+    int lastProcessGrantedIndex = 0;
+    for (int i = 0;
+         i < static_cast<int>(std::min(maxManagedCores, clientQueue.size()));
+         i++) {
+        processToCoreCount[clientQueue[i].first]++;
+        LOG(ERROR, "Process %d granted %d cores", clientQueue[i].first->id,
+            processToCoreCount[clientQueue[i].first]);
+        clientQueue[i].second = true;
+        lastProcessGrantedIndex = i;
+    }
+
+    // Check whether hypertwin constraints are satisfied, and reduce if
+    // unsatisfied. Assign leftover hypertwins to processes further down the
+    // priority list. NB: In doing so, we may end up violating more hypertwin
+    // constraints, but this is okay as long as the hypertwin constraint is
+    // eventually satisfied. Invariant: All processes except the one most
+    // recently granted a core are guaranteed to have their hypertwin
+    // constraints satisfied.
+    ProcessInfo* potentiallyUnsatisfied =
+        clientQueue[lastProcessGrantedIndex].first;
+    // Odd number of cores, and unwilling to share, so it must reduce
+    // the number of cores it takes. This institutes a policy of
+    // penalizing applications that do not want to share.
+    while (lastProcessGrantedIndex < static_cast<int>(clientQueue.size()) &&
+           !potentiallyUnsatisfied->willShareLastCore &&
+           (processToCoreCount[potentiallyUnsatisfied] & 1)) {
+        clientQueue[lastProcessGrantedIndex].second = false;
+        // Take away a core from the client whose HT constraints are
+        // unsatisfied.
+        processToCoreCount[potentiallyUnsatisfied]--;
+        lastProcessGrantedIndex++;
+        if (lastProcessGrantedIndex < static_cast<int>(clientQueue.size())) {
+            // Grant a core to the next client in line for a core.
+            clientQueue[lastProcessGrantedIndex].second = true;
+            potentiallyUnsatisfied = clientQueue[lastProcessGrantedIndex].first;
+            processToCoreCount[potentiallyUnsatisfied]++;
+        }
+    }
+
+    std::deque<ProcessInfo*> sortedProcesses;
+    for (auto it = processToCoreCount.begin(); it != processToCoreCount.end();
+         it++) {
+        if (it->second > 0) {
+            sortedProcesses.push_back(it->first);
+            LOG(ERROR, "Process %d joined sorted processes", it->first->id);
+        }
+    }
+    // Sort by processes by descending number of cores assigned.
+    std::sort(sortedProcesses.begin(), sortedProcesses.end(),
+              [&processToCoreCount](ProcessInfo* a, ProcessInfo* b) {
+                  return processToCoreCount[a] > processToCoreCount[b];
+              });
+
+    // Pull out hyperthread counts from machine topology, reducing the count by
+    // one for the socket containing the always unmanaged core.
+    std::unordered_map<int, uint32_t> socketToNumCores;
+    for (Topology::NUMANode node : topology.nodes) {
+        socketToNumCores[node.id] = static_cast<uint32_t>(node.cores.size());
+    }
+
+    // Resulting mapping from processes to sockets.
+    std::unordered_map<struct ProcessInfo*, int> processToSocket;
+
+    // Assign clients to sockets using brute force backtracking with affinity.
+    // Keep removing processes from the end of the list until we find a fit.
+    // NB: The intitial version of this code assumes for simplicity that all
+    // processes want to stay within a socket.
+    // TODO: Support for processes that do not have a socket affinity
+    // preferences will be added after we get this core allocation algorithm
+    // off the ground and tested.
+    while (!assignProcessesToSockets(sortedProcesses, processToCoreCount,
+                                     socketToNumCores, processToSocket)) {
+        // Chop off the last process to be granted a core.
+        ProcessInfo* potentiallyUnsatisfied =
+            clientQueue[lastProcessGrantedIndex].first;
+        clientQueue[lastProcessGrantedIndex].second = false;
+        processToCoreCount[potentiallyUnsatisfied]--;
+        lastProcessGrantedIndex--;
+
+        LOG(ERROR, "lastProcessGrantedIndex = %d", lastProcessGrantedIndex);
+        if (lastProcessGrantedIndex < 0) {
             LOG(ERROR,
-                "Invariant Violated: Attempted to grant preempted core %d to a "
-                "thread other than the preempted thread.",
-                core->id);
+                "No processes are able to get any cores under any socket "
+                "assignment!");
             abort();
         }
+    }
 
-        // Move the thread before waking it up so that it wakes up in its
-        // new cpuset
-        ThreadState prevState = thread->state;
-        if (!moveThreadToManagedCore(thread, core)) {
-            // We were probably unable to move this thread to a managed
-            // core because it has exited. To handle this case, it is
-            // easiest to leave this core unoccupied for now, since we will
-            // receive a hangup message from the thread's socket at which
-            // point distributeCores() will be called again and this core
-            // will be filled.
-            LOG(DEBUG,
-                "Skipping assignment of core %d because were were "
-                "unable to write to it\n",
-                core->id);
-            continue;
+    // Extract the set of cores from each socket.
+    std::unordered_map<int, std::deque<CoreInfo*>> socketToCoresAvailable;
+    for (Topology::NUMANode node : topology.nodes) {
+        for (int coreId : node.cores) {
+            // Rely on implicit construction of the object with
+            // std::unordered_map's operator[]
+            socketToCoresAvailable[node.id].push_back(coreIdToCore[coreId]);
         }
+    }
 
-        if (prevState == RUNNING_PREEMPTED) {
-            LOG(DEBUG,
-                "Thread %d was previously running preempted on the "
-                "unmanaged core\n",
-                thread->id);
-            process->stats->unpreemptedCount++;
-        } else {
-            // Thread was blocked
-            if (!testingSkipSocketCommunication) {
-                // Wake up the thread
-                // TimeTrace::record("SERVER: Sending wakeup");
-                wakeupThread(thread, core);
-                // TimeTrace::record("SERVER: Finished sending wakeup\n");
-                LOG(DEBUG, "Sent wakeup");
+    // Perform actual assignment of cores to processes within each socket
+    for (auto kv : processToSocket) {
+        ProcessInfo* process = kv.first;
+        int numaNode = kv.second;
+        std::deque<CoreInfo*>& candidateCores =
+            socketToCoresAvailable[numaNode];
+        int numCores = std::min(processToCoreCount[process],
+                                process->getTotalDesiredCores());
+
+        //        process->takeCores(candidatesCores, numCores, numaNode); //
+        //        Decide whether to abstract this out.
+
+        // Clean up any previously assigned cores to avoid bias towards
+        // incumbents. Invariant: All other processes have either already
+        // claimed all of their cores or none of their cores at this point.
+        process->logicallyOwnedCores.clear();
+        int coresClaimed = 0;
+        // Processes first favor the cores they already physically own,
+        // provided that such cores are on the assigned socket.  This reduces
+        // churn unless there is a cross-socket migration.
+        for (int i = 0;
+             i < static_cast<int>(process->physicallyOwnedCores.size()) &&
+             coresClaimed < numCores;
+             i++) {
+            CoreInfo* desiredCore = process->physicallyOwnedCores[i];
+            if (topology.coreToSocket[desiredCore->id] != numaNode)
+                continue;
+            // If another process took this core, then we should take
+            // it back unless the other process also owns the hypertwin of
+            // this core already.
+            if (desiredCore->owner != process && desiredCore->owner != NULL) {
+                // Other process also owns hypertwin, so we give up on taking
+                // this core.
+                if (coreIdToCore[getHyperTwin(desiredCore->id)]->owner ==
+                    desiredCore->owner)
+                    continue;
+                ProcessInfo* formerOwner = desiredCore->owner;
+                formerOwner->logicallyOwnedCores.erase(desiredCore);
+                formerOwner->logicallyOwnedCores.insert(
+                    findGoodCoreForProcess(formerOwner, candidateCores));
             }
-
-            process->stats->numBlockedThreads--;
-            LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
-                process->stats->numBlockedThreads.load());
+            process->logicallyOwnedCores.insert(desiredCore);
+            desiredCore->owner = process;
+            candidateCores.erase(std::remove(candidateCores.begin(),
+                                             candidateCores.end(), desiredCore),
+                                 candidateCores.end());
+            coresClaimed++;
+        }
+        LOG(ERROR, "coresClaimed %d, numCores %d", coresClaimed, numCores);
+        // Pick up additional cores if we haven't yet reached the number that
+        // were earmarked for us.
+        while (coresClaimed < numCores) {
+            // TODO: The new cores that we pick for a given process may
+            // currently be owned by a different process (it should be an
+            // invariant that they are the last core of a different process),
+            // and we have to account for hypertwin constraints.
+            process->logicallyOwnedCores.insert(
+                findGoodCoreForProcess(process, candidateCores));
+            coresClaimed++;
         }
     }
-    // Sanity check; make sure we have enough preemptible cores to cover the
-    // threads that should receive cores.
-    if (preemptibleManagedCores.size() < threadsToReceiveCores.size()) {
-        LOG(ERROR,
-            "Invariant violated: threadsToReceiveCores is not empty, but "
-            "there are no cores to preempt.");
-        abort();
-    }
 
-    // All cores which are preemptible must be preempted; otherwise
-    // applications cannot scale down unless there is competition from other
-    // applications.
-    while (!preemptibleManagedCores.empty()) {
-        struct CoreInfo* core = preemptibleManagedCores.front();
-        preemptibleManagedCores.pop_front();
-        requestCoreRelease(core);
-    }
+    // TODO: Test the logical assignment algorithm above and tweak it towards
+    // correctness.
+    // TODO: Move towards making the physical assignments consistent with the
+    // logical assignments.
+    makeCoreAssignmentsConsistent();
+
+    // TODO: Think about how to test this algorithm independently of the
+    // physical assignments.
+    // TODO: May need to mock out the presence of multiple sockets on machines
+    // that do not have it for ease of testing.
+    // That is, mock out the API calls that tell you about cpusets.
+    // Assign one, and keep assigning all until there's not enough room.
+    // TODO: Make sure we don't assign more cores to a process than it
+    // requested in the last step.
+
+    ////////////////////////////////////////////////////////////////////////////////
+
+    //    // First, find the threads that should receive cores.
+    //    // This is a queue (front has higher priority) of threads not
+    //    currently
+    //    // managed that should be placed on cores
+    //    std::deque<struct ThreadInfo*> threadsToReceiveCores;
+    //
+    //    // Keep track of the threads that are already managed and should
+    //    remain
+    //    // so. Threads that will be preempted do not make it into this set.
+    //    std::unordered_set<struct ThreadInfo*> threadsAlreadyManaged;
+    //
+    //    // Iterate from highest to lowest priority
+    //    bool coresFilled = false;
+    //    for (size_t priority = 0;
+    //         priority < corePriorityQueues.size() && !coresFilled; priority++)
+    //         {
+    //        auto& processes = corePriorityQueues[priority];
+    //        bool threadAdded = true;
+    //
+    //        // A running count of how many cores we have assigned to a process
+    //        at
+    //        // this priority. This makes it easy to ensure that we don't
+    //        assign
+    //        // more cores to a process than it has requested.
+    //        std::unordered_map<struct ProcessInfo*, uint32_t>
+    //        processToCoreCount;
+    //
+    //        // Any threads that are already managed should remain so at this
+    //        // priority.
+    //        for (struct ThreadInfo* thread : managedThreads) {
+    //            if (threadsAlreadyManaged.find(thread) !=
+    //                threadsAlreadyManaged.end()) {
+    //                continue;
+    //            }
+    //
+    //            struct ProcessInfo* process = thread->process;
+    //            if (processToCoreCount[process] <
+    //                process->desiredCorePriorities[priority]) {
+    //                // We want to keep this thread on its core
+    //                threadsAlreadyManaged.insert(thread);
+    //                processToCoreCount[process]++;
+    //
+    //                if (threadsToReceiveCores.size() +
+    //                        threadsAlreadyManaged.size() ==
+    //                    maxManagedCores) {
+    //                    coresFilled = true;
+    //                    break;
+    //                }
+    //            }
+    //        }
+    //
+    //        // Add as many blocked threads at this priority level as we can
+    //        while (threadAdded && !coresFilled) {
+    //            threadAdded = false;
+    //
+    //            // Iterate over every process at this priority level
+    //            for (size_t i = 0; i < processes.size(); i++) {
+    //                // Pop off the first processes and put it at the back of
+    //                the
+    //                // deque (so that we share cores evenly accross threads at
+    //                this
+    //                // priority level)
+    //                struct ProcessInfo* process = processes.front();
+    //                processes.pop_front();
+    //                processes.push_back(process);
+    //
+    //                if (processToCoreCount[process] ==
+    //                    process->desiredCorePriorities[priority]) {
+    //                    continue;
+    //                }
+    //
+    //                // Prefer moving preempted threads back to their cores
+    //                over
+    //                // blocked threads.
+    //                std::unordered_set<struct ThreadInfo*>* threadSet =
+    //                    &(process->threadStateToSet[RUNNING_PREEMPTED]);
+    //                if (threadSet->empty()) {
+    //                    threadSet = &(process->threadStateToSet[BLOCKED]);
+    //                }
+    //                if (!threadSet->empty()) {
+    //                    // Choose some blocked thread to put on a core
+    //                    struct ThreadInfo* thread = *(threadSet->begin());
+    //                    threadsToReceiveCores.push_back(thread);
+    //                    processToCoreCount[process]++;
+    //                    threadAdded = true;
+    //
+    //                    // Temporarily remove the thread from the process's
+    //                    set of
+    //                    // threads so that we don't assign it to a core more
+    //                    than
+    //                    // once
+    //                    threadSet->erase(thread);
+    //
+    //                    if (threadsToReceiveCores.size() +
+    //                            threadsAlreadyManaged.size() ==
+    //                        maxManagedCores) {
+    //                        coresFilled = true;
+    //                        break;
+    //                    }
+    //                }
+    //            }
+    //        }
+    //    }
+    //
+    //    timeTrace("SERVER: Finished deciding which threads to put on cores");
+    //
+    //    // Add threads back to the correct sets in their process
+    //    for (struct ThreadInfo* thread : threadsToReceiveCores) {
+    //        thread->process->threadStateToSet[thread->state].insert(thread);
+    //    }
+    //
+    //    size_t numAssignedCores =
+    //        threadsToReceiveCores.size() + threadsAlreadyManaged.size();
+    //    if (numAssignedCores > managedCores.size()) {
+    //        // We need to make more cores managed
+    //        size_t numCoresToMakeManaged = numAssignedCores -
+    //        managedCores.size(); LOG(DEBUG, "Making %lu cores managed",
+    //        numCoresToMakeManaged);
+    //        // Choose the right cores to make unmanaged, based on the set of
+    //        // threads to receive cores.
+    //        // This is the number of already-managed cores that can be used to
+    //        // service threadsToReceiveCores.
+    //        uint32_t offset = static_cast<uint32_t>(managedCores.size() -
+    //                                                threadsAlreadyManaged.size());
+    //        // The following loop assumes that the set of already-managed
+    //        cores
+    //        // which will be considered by threadsToReceiveCores is already a
+    //        good
+    //        // set. A more strict calculation would throw out all parts of the
+    //        // managed core set which do not already have a thread, and
+    //        reconsider
+    //        // the additions to the managed core set from scratch.
+    //        for (uint32_t i = 0; i < numCoresToMakeManaged; i++) {
+    //            CoreInfo* coreToAdd = findGoodCoreForProcess(
+    //                threadsToReceiveCores[i + offset]->process,
+    //                unmanagedCores);
+    //            managedCores.push_back(coreToAdd);
+    //        }
+    //
+    //        // Update the unmanaged cpuset now so that threads it will be
+    //        updated
+    //        // by the time we wake up managed threads
+    //        updateUnmanagedCpuset();
+    //    }
+    //
+    //    // Extract the subset of managedCores that do not have a managedThread
+    //    // under the current distribution, as well as the subset of
+    //    managedCores
+    //    // that have a premptible thread on them.
+    //    std::deque<struct CoreInfo*> availableManagedCores;
+    //    std::deque<struct CoreInfo*> preemptibleManagedCores;
+    //    for (struct CoreInfo* core : managedCores) {
+    //        if (!core->managedThread) {
+    //            availableManagedCores.push_back(core);
+    //        } else if (threadsAlreadyManaged.find(core->managedThread) ==
+    //                   threadsAlreadyManaged.end()) {
+    //            preemptibleManagedCores.push_back(core);
+    //        } else {
+    //            LOG(DEBUG, "Keeping thread %d on core %d",
+    //            core->managedThread->id,
+    //                core->id);
+    //        }
+    //    }
+    //
+    //    // First restore all previously preempted threads among the
+    //    // threadsToReceiveCores and ensure that they are satisfied.
+    //    for (auto it = threadsToReceiveCores.begin();
+    //         it != threadsToReceiveCores.end();) {
+    //        ThreadInfo* thread = *it;
+    //        if (thread->corePreemptedFrom == NULL) {
+    //            it++;
+    //            continue;
+    //        }
+    //        // Check if the desired core is among the available managed cores.
+    //        If
+    //        // so, then claim it immediately.
+    //        // In either case, remove it from threadsToReceiveCores.
+    //        auto availableCoresIt =
+    //            std::find(availableManagedCores.begin(),
+    //                      availableManagedCores.end(),
+    //                      thread->corePreemptedFrom);
+    //        if (availableCoresIt != availableManagedCores.end()) {
+    //            CoreInfo* core = thread->corePreemptedFrom;
+    //            struct ProcessInfo* process = thread->process;
+    //            LOG(NOTICE, "Granting core %d to thread %d from process %d",
+    //                core->id, thread->id, process->id);
+    //
+    //            // Move the thread before waking it up so that it wakes up in
+    //            its
+    //            // new cpuset
+    //            if (!moveThreadToManagedCore(thread, core)) {
+    //                // We were probably unable to move this thread to a
+    //                managed
+    //                // core because it has exited. To handle this case, it is
+    //                // easiest to leave this core unoccupied for now, since we
+    //                will
+    //                // receive a hangup message from the thread's socket at
+    //                which
+    //                // point distributeCores() will be called again and this
+    //                core
+    //                // will be filled.
+    //                LOG(DEBUG,
+    //                    "Skipping assignment of core %d because were were "
+    //                    "unable to write to it\n",
+    //                    core->id);
+    //            }
+    //            availableManagedCores.erase(availableCoresIt);
+    //        }
+    //        it = threadsToReceiveCores.erase(it);
+    //    }
+    //    // TODO: Consider all cores; currently there is an explicit set of
+    //    managed
+    //    // vs unmanaged cores, and the managed core set is too small.
+    //    // Somehow we need to consider all cores when we decide what to do.
+    //
+    //    // Go through threads and try to find a core for them.
+    //    while (!threadsToReceiveCores.empty() &&
+    //    !availableManagedCores.empty()) {
+    //        struct ThreadInfo* thread = threadsToReceiveCores.front();
+    //        threadsToReceiveCores.pop_front();
+    //
+    //        struct ProcessInfo* process = thread->process;
+    //        CoreInfo* core = findGoodCoreForProcess(process,
+    //        availableManagedCores);
+    //
+    //        // Refuse to take cores which threads were previously booted from.
+    //        while (process->coresPreemptedFrom.find(core) !=
+    //               process->coresPreemptedFrom.end()) {
+    //            LOG(WARNING,
+    //                "Skipping over core %d which was previously preempted
+    //                from.", core->id);
+    //            if (availableManagedCores.empty()) {
+    //                core = NULL;
+    //                break;
+    //            }
+    //            core = findGoodCoreForProcess(process, availableManagedCores);
+    //        }
+    //        // We ran out of cores which are not bespoken for a particular
+    //        kernel
+    //        // thread (because said kernel thread was previously preempted and
+    //        not
+    //        // yet restored).
+    //        if (core == NULL) {
+    //            break;
+    //        }
+    //
+    //        LOG(NOTICE, "Granting core %d to thread %d from process %d",
+    //        core->id,
+    //            thread->id, process->id);
+    //
+    //        // Ensure that the new thread is not preempted immediately due to
+    //        // stale state left behind by a previously preempted thread from
+    //        // the same process.
+    //        if (process->stats->threadCommunicationBlocks[core->id]
+    //                .coreReleaseRequested) {
+    //            LOG(ERROR,
+    //                "Invariant Violated: Attempted to grant preempted core %d
+    //                to a " "thread other than the preempted thread.",
+    //                core->id);
+    //            abort();
+    //        }
+    //
+    //        // Move the thread before waking it up so that it wakes up in its
+    //        // new cpuset
+    //        ThreadState prevState = thread->state;
+    //        if (!moveThreadToManagedCore(thread, core)) {
+    //            // We were probably unable to move this thread to a managed
+    //            // core because it has exited. To handle this case, it is
+    //            // easiest to leave this core unoccupied for now, since we
+    //            will
+    //            // receive a hangup message from the thread's socket at which
+    //            // point distributeCores() will be called again and this core
+    //            // will be filled.
+    //            LOG(DEBUG,
+    //                "Skipping assignment of core %d because were were "
+    //                "unable to write to it\n",
+    //                core->id);
+    //            continue;
+    //        }
+    //
+    //        if (prevState == RUNNING_PREEMPTED) {
+    //            LOG(DEBUG,
+    //                "Thread %d was previously running preempted on the "
+    //                "unmanaged core\n",
+    //                thread->id);
+    //            process->stats->unpreemptedCount++;
+    //        } else {
+    //            // Thread was blocked
+    //            if (!testingSkipSocketCommunication) {
+    //                // Wake up the thread
+    //                // TimeTrace::record("SERVER: Sending wakeup");
+    //                wakeupThread(thread, core);
+    //                // TimeTrace::record("SERVER: Finished sending wakeup\n");
+    //                LOG(DEBUG, "Sent wakeup");
+    //            }
+    //
+    //            process->stats->numBlockedThreads--;
+    //            LOG(DEBUG, "Process %d now has %u blocked threads",
+    //            process->id,
+    //                process->stats->numBlockedThreads.load());
+    //        }
+    //    }
+    //    // Sanity check; make sure we have enough preemptible cores to cover
+    //    the
+    //    // threads that should receive cores.
+    //    if (preemptibleManagedCores.size() < threadsToReceiveCores.size()) {
+    //        LOG(ERROR,
+    //            "Invariant violated: threadsToReceiveCores is not empty, but "
+    //            "there are no cores to preempt.");
+    //        abort();
+    //    }
+    //
+    //    // All cores which are preemptible must be preempted; otherwise
+    //    // applications cannot scale down unless there is competition from
+    //    other
+    //    // applications.
+    //    while (!preemptibleManagedCores.empty()) {
+    //        struct CoreInfo* core = preemptibleManagedCores.front();
+    //        preemptibleManagedCores.pop_front();
+    //        requestCoreRelease(core);
+    //    }
 
     timeTrace("SERVER: Finished core distribution");
 }
@@ -1396,6 +1717,11 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
 
     if (!core->managedThread) {
         LOG(WARNING, "There is no thread on core %d to preempt", core->id);
+        return;
+    }
+    if (core->coreReleaseRequested) {
+        LOG(DEBUG, "There is an oustanding request to release core %d",
+            core->id);
         return;
     }
 
@@ -1440,6 +1766,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
 
     timerFdToInfo[timerFd] = {process->id, core};
 
+    core->coreReleaseRequested = true;
     timeTrace("SERVER: Finished requesting core release");
 }
 
@@ -1499,7 +1826,8 @@ CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
     // The EPIPE error is still returned.
     ssize_t bytesSent = sys->send(socket, buf, numBytes, MSG_NOSIGNAL);
     if (bytesSent < 0) {
-        LOG(ERROR, "%s: %s", err.c_str(), strerror(errno));
+        LOG(ERROR, "%s: Error %d: %s on socket %d", err.c_str(), errno,
+            strerror(errno), socket);
         return false;
     }
     if (bytesSent != static_cast<ssize_t>(numBytes)) {
@@ -1511,201 +1839,12 @@ CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
 }
 
 /**
- * Creates a new cpuset at dirName (this should be within the cpuset filesystem)
- * and assigns it the given cores and memories. Exits on error.
- *
- * \param dirName
- *     The path at which to create the cpuset. This should be within the cpuset
- *     filesystem.
- * \param cores
- *     A comma- and/or dash-delimited string representing the cores that should
- *     belong to this cpuset.
- * \param mems
- *     A comma- and/or dash-delimited string representing the memories that
- *     should belong to this cpuset.
- */
-void
-CoreArbiterServer::createCpuset(std::string dirName, std::string cores,
-                                std::string mems) {
-    if (sys->mkdir(dirName.c_str(), S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP |
-                                        S_IXGRP | S_IROTH | S_IXOTH) < 0) {
-        LOG(ERROR, "Error creating cpuset directory at %s: %s", dirName.c_str(),
-            strerror(errno));
-        exit(-1);
-    }
-
-    std::string memsPath = dirName + "/cpuset.mems";
-    std::ofstream memsFile(memsPath);
-    if (!memsFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", memsPath.c_str());
-        exit(-1);
-    }
-    memsFile << mems;
-    memsFile.close();
-
-    std::string cpusPath = dirName + "/cpuset.cpus";
-    std::ofstream cpusFile(cpusPath);
-    if (!cpusFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", cpusPath.c_str());
-        exit(-1);
-    }
-    cpusFile << cores;
-    cpusFile.close();
-}
-
-/**
- * Moves all processes in the cpuset at fromPath to the cpuset at toPath. This
- * is useful at startup to move all processes into the unmanaged cpuset.
- *
- * \param fromPath
- *     The path to the cpuset.cpus file to move processes from
- * \param toPath
- *     The path to the cpuset.cpus file to move all processes to
- */
-void
-CoreArbiterServer::moveProcsToCpuset(std::string fromPath, std::string toPath) {
-    if (testingSkipCpusetAllocation) {
-        return;
-    }
-
-    LOG(DEBUG, "Moving procs in %s to %s", fromPath.c_str(), toPath.c_str());
-
-    std::ifstream fromFile(fromPath);
-    if (!fromFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", fromPath.c_str());
-        exit(-1);
-    }
-
-    std::ofstream toFile(toPath);
-    if (!toFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", toPath.c_str());
-        exit(-1);
-    }
-
-    pid_t processId;
-    while (fromFile >> processId) {
-        toFile << processId;
-        toFile << std::endl;
-        if (toFile.bad()) {
-            // The ofstream errors out if we try to move a kernel process. This
-            // is normal behavior, but it means we need to reopen the file.
-            toFile.close();
-            toFile.open(toPath, std::fstream::app);
-            if (!toFile.is_open()) {
-                LOG(ERROR, "Unable top open %s", toPath.c_str());
-                exit(-1);
-            }
-        }
-    }
-
-    fromFile.close();
-    toFile.close();
-}
-
-/**
  * Examines all the threads on a given core, and removes threads which are not
  * the managed thread from that core.
  */
 void
 CoreArbiterServer::removeUnmanagedThreadsFromCore(CoreInfo* core) {
-    if (testingSkipCpusetAllocation) {
-        return;
-    }
-
-    std::ifstream fromFile(core->cpusetFilename);
-    if (!fromFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", core->cpusetFilename.c_str());
-        exit(-1);
-    }
-
-    int threadId;
-    while (fromFile >> threadId) {
-        // The managed thread should stay put.
-        if (threadId == core->managedThread->id)
-            continue;
-
-        // Every other thread should be moved to the unmanagedCpusetTasks.
-        unmanagedCpusetTasks << threadId;
-        unmanagedCpusetTasks.flush();
-        if (unmanagedCpusetTasks.bad()) {
-            // This error is likely because the thread has exited. Sleeping
-            // helps keep the kernel from giving more errors the next time we
-            // try to move a legitimate thread.
-            LOG(ERROR, "Unable to write %d to unmanaged cpuset file", threadId);
-            usleep(750);
-        }
-    }
-    fromFile.close();
-}
-
-/**
- * Removes all cpusets at the given directory, including the directory itself.
- * This should be called at both server startup and shutdown, to ensure a clean
- * cpuset setup for the server and as a courtesy to the system when the server
- * exits.
- *
- * \param arbiterCpusetPath
- *     The path to the CoreArbiterServer's cpuset subtree
- */
-void
-CoreArbiterServer::removeOldCpusets(std::string arbiterCpusetPath) {
-    if (testingSkipCpusetAllocation) {
-        return;
-    }
-
-    std::string procsDestFilename = cpusetPath + "/cgroup.procs";
-    DIR* dir = sys->opendir(arbiterCpusetPath.c_str());
-    if (!dir) {
-        // This is likely just because we don't have old cpusets to remove
-        LOG(WARNING, "Error on opendir %s: %s", arbiterCpusetPath.c_str(),
-            strerror(errno));
-        return;
-    }
-
-    // Remove all processes from a cpuset
-    for (struct dirent* entry = sys->readdir(dir); entry != NULL;
-         entry = sys->readdir(dir)) {
-        if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
-            std::string dirName =
-                arbiterCpusetPath + "/" + std::string(entry->d_name);
-            std::string procsFilename = dirName + "/cgroup.procs";
-            moveProcsToCpuset(procsFilename, procsDestFilename);
-        }
-    }
-
-    // We need to sleep here to give the kernel time to actually move processes
-    // into different cpusets. (Retrying doesn't work.)
-    usleep(750);
-    rewinddir(dir);
-
-    // Delete all CoreArbiter cpuset subdirectories
-    for (struct dirent* entry = sys->readdir(dir); entry != NULL;
-         entry = sys->readdir(dir)) {
-        if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
-            std::string dirName =
-                arbiterCpusetPath + "/" + std::string(entry->d_name);
-
-            LOG(DEBUG, "removing %s", dirName.c_str());
-            if (sys->rmdir(dirName.c_str()) < 0) {
-                LOG(ERROR, "Error on rmdir %s: %s", dirName.c_str(),
-                    strerror(errno));
-                exit(-1);
-            }
-        }
-    }
-
-    // Remove the whole CoreArbiter cpuset directory
-    if (sys->rmdir(arbiterCpusetPath.c_str()) < 0) {
-        LOG(ERROR, "Error on rmdir %s: %s", arbiterCpusetPath.c_str(),
-            strerror(errno));
-        exit(-1);
-    }
-
-    if (sys->closedir(dir) < 0) {
-        LOG(ERROR, "Error on closedir %s: %s", arbiterCpusetPath.c_str(),
-            strerror(errno));
-        exit(-1);
-    }
+    // TODO: Move this call.
 }
 
 /**
@@ -1725,19 +1864,24 @@ CoreArbiterServer::moveThreadToManagedCore(struct ThreadInfo* thread,
                                            struct CoreInfo* core) {
     if (!testingSkipCpusetAllocation) {
         timeTrace("SERVER: Moving thread to managed cpuset");
-
-        core->cpusetFile << thread->id;
-        core->cpusetFile.flush();
-        if (core->cpusetFile.bad()) {
-            // This error is likely because the thread has exited. We need to
-            // close and reopen the file to prevent future errors.
-            LOG(ERROR, "Unable to write %d to cpuset file for core %d",
-                thread->id, core->id);
-            core->cpusetFile.close();
-            core->cpusetFile.clear();
-            core->cpusetFile.open(core->cpusetFilename);
+        if (!coreSegregator->setThreadForCore(core->id, thread->id)) {
             return false;
         }
+        //
+        //        core->cpusetFile << thread->id;
+        //        core->cpusetFile.flush();
+        //        if (core->cpusetFile.bad()) {
+        //            // This error is likely because the thread has exited. We
+        //            need to
+        //            // close and reopen the file to prevent future errors.
+        //            LOG(ERROR, "Unable to write %d to cpuset file for core
+        //            %d",
+        //                thread->id, core->id);
+        //            core->cpusetFile.close();
+        //            core->cpusetFile.clear();
+        //            core->cpusetFile.open(core->cpusetFilename);
+        //            return false;
+        //        }
 
         timeTrace("SERVER: Finished moving thread to managed cpuset");
     }
@@ -1745,7 +1889,6 @@ CoreArbiterServer::moveThreadToManagedCore(struct ThreadInfo* thread,
     changeThreadState(thread, RUNNING_MANAGED);
     thread->core = core;
     core->managedThread = thread;
-    managedThreads.push_back(thread);
     thread->process->stats->numOwnedCores++;
     stats->numUnoccupiedCores--;
 
@@ -1792,18 +1935,7 @@ CoreArbiterServer::removeThreadFromManagedCore(struct ThreadInfo* thread,
         // Writing a thread to a new cpuset automatically removes it from the
         // one it belonged to before
         timeTrace("SERVER: Removing thread from managed cpuset");
-
-        unmanagedCpusetTasks << thread->id;
-        unmanagedCpusetTasks.flush();
-        if (unmanagedCpusetTasks.bad()) {
-            // This error is likely because the thread has exited. Sleeping
-            // helps keep the kernel from giving more errors the next time we
-            // try to move a legitimate thread.
-            LOG(ERROR, "Unable to write %d to unmanaged cpuset file",
-                thread->id);
-            usleep(750);
-        }
-
+        coreSegregator->removeThreadFromCore(thread->core->id);
         timeTrace("SERVER: Finished removing thread from managed cpuset");
     }
 
@@ -1811,36 +1943,8 @@ CoreArbiterServer::removeThreadFromManagedCore(struct ThreadInfo* thread,
     thread->core->managedThread = NULL;
     thread->core->threadRemovalTime = Cycles::rdtsc();
     thread->core = NULL;
-    managedThreads.erase(
-        std::remove(managedThreads.begin(), managedThreads.end(), thread),
-        managedThreads.end());
 
     stats->numUnoccupiedCores++;
-}
-
-/**
- * Updates the unmanaged cpuset with the cores in the unmanagedCores vector.
- * This method should not be called too often, as changing cpusets frequently
- * can cause the kernel to throw errors.
- */
-void
-CoreArbiterServer::updateUnmanagedCpuset() {
-    if (testingSkipCpusetAllocation) {
-        return;
-    }
-
-    std::string unmanagedCoresString = alwaysUnmanagedString;
-    for (CoreInfo* core : unmanagedCores) {
-        unmanagedCoresString += std::to_string(core->id) + ",";
-    }
-
-    LOG(DEBUG, "Changing unmanaged cpuset to %s", unmanagedCoresString.c_str());
-    unmanagedCpusetCpus << unmanagedCoresString << std::endl;
-
-    if (unmanagedCpusetCpus.bad()) {
-        LOG(ERROR, "Error changing unmanaged cpuset cpus");
-        exit(-1);  // TODO(jspeiser): handle elegantly
-    }
 }
 
 /**
