@@ -2,7 +2,7 @@ CXX ?= g++
 CCFLAGS=-g -Wall -Wformat=2 -Wextra -Wwrite-strings \
 -Wno-unused-parameter -Wmissing-format-attribute -Wno-non-template-friend \
 -Woverloaded-virtual -Wcast-qual -Wcast-align -Wconversion -fomit-frame-pointer \
--std=c++11 -fPIC -O3
+-std=c++11 -fPIC -Og
 
 # Output directories
 OBJECT_DIR = obj
@@ -22,7 +22,8 @@ ifndef CHECK_TARGET
 CHECK_TARGET=$$(find $(SRC_DIR) '(' -name '*.h' -or -name '*.cc' ')' -not -path '$(TOP)/googletest/*' )
 endif
 
-OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o CodeLocation.o ArbiterClientShim.o
+OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o \
+	CodeLocation.o ArbiterClientShim.o Topology.o CpusetCoreSegregator.o
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')

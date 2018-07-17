@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <linux/futex.h>
 #include <netinet/in.h>
+#include <stdlib.h>
 #include <sys/epoll.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
