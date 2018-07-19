@@ -98,8 +98,8 @@ class CoreArbiterServer {
         // core.
         bool coreReleaseRequested;
 
-        // A pointer to the thread that owns this core under the current
-        // intended assignment. NULL if this core is unmanaged.
+        // A pointer to the process that owns this core under the current
+        // intended assignment. NULL means this core is unmanaged.
         ProcessInfo* owner;
 
         // The name of this core's managed cpuset tasks file.
@@ -365,23 +365,9 @@ class CoreArbiterServer {
     // Maps the kernel's IDs for cores to our associated data structure.
     std::unordered_map<int, struct CoreInfo*> coreIdToCore;
 
-    // Contains the information about cores that are not currently in the
-    // unmanaged cpuset. This vector grows with cores from unmanagedCores when
-    // the arbiter is loaded and shrinks when there are fewer cores being used.
-    std::vector<struct CoreInfo*> managedCores;
-
-    // Contains the information about cores that are currently in the unmanaged
-    // cpuset. At startup, this vector contains all cores controlled by the
-    // arbiter. It shrinks as cores are requested and grows when cores are
-    // unused for an extended period.
-    std::deque<struct CoreInfo*> unmanagedCores;
-
-    // A list of CPU IDs for cores not under the arbiter's control.
-    std::vector<int> alwaysUnmanagedCores;
-
     // The last time (in cycles) that the unmanaged cpuset's set of cores was
     // updated.
-    uint64_t unmanagedCpusetLastUpdate;
+    uint64_t lastGarbageCollectionTime;
 
     // The minimum amount of time (in milliseconds) to wait before adding an
     // unoccupied core to the unmanaged cpuset. Also the minimum amount of time

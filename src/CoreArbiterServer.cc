@@ -31,7 +31,6 @@
 
 using PerfUtils::TimeTrace;
 using PerfUtils::Util::containerToUnorderedSet;
-using PerfUtils::Util::getHyperTwin;
 
 // Uncomment the following line to enable time traces.
 // #define TIME_TRACE 1
@@ -95,8 +94,8 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::vector<int> managedCoreIds,
                                      bool arbitrateImmediately)
     : CoreArbiterServer(socketPath, sharedMemPathPrefix, managedCoreIds,
-                        Topology(containerToUnorderedSet(managedCoreIds)),
-                        new CpusetCoreSegregator(), arbitrateImmediately) {}
+                        Topology(), new CpusetCoreSegregator(),
+                        arbitrateImmediately) {}
 
 CoreArbiterServer::CoreArbiterServer(std::string socketPath,
                                      std::string sharedMemPathPrefix,
@@ -113,7 +112,6 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
       advisoryLockFd(-1),
       epollFd(-1),
       preemptionTimeout(RELEASE_TIMEOUT_MS),
-      alwaysUnmanagedCores(),
       cpusetUpdateTimeout(CPUSET_UPDATE_TIMEOUT_MS),
       corePriorityQueues(NUM_PRIORITIES),
       terminationFd(eventfd(0, 0)),
@@ -141,9 +139,9 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         exit(-1);
     }
 
-    // If managedCoreIds is empty, populate it with everything except
-    // core 0
-    unsigned int numCores = std::thread::hardware_concurrency();
+    // If managedCoreIds is empty or all cores, populate it with everything
+    // except core 0
+    unsigned int numCores = topology.getNumCores();
     if (!testingDoNotChangeManagedCores) {
         if (managedCoreIds.empty() || managedCoreIds.size() == numCores) {
             // If no managed cores are specified or if every core is given,
@@ -154,29 +152,11 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
             for (int id = 1; id < static_cast<int>(numCores); id++) {
                 managedCoreIds.push_back(id);
             }
-            alwaysUnmanagedCores.push_back(0);
-        } else {
-            // Build the alwaysUnmanagedCores to include all cores which are
-            // not specified in managedCoreIds, thereby ensuring that the
-            // non-managed threads can always run on all of these cores. If the
-            // application specifies core 0 as one of the managed cores, then
-            // this code will exclude it from the alwaysUnmanagedCores.
-            alwaysUnmanagedCores.clear();
-            std::sort(managedCoreIds.begin(), managedCoreIds.end());
-            size_t idx = 0;
-            for (int i = 0; i < static_cast<int>(numCores); i++) {
-                if (idx < managedCoreIds.size() && managedCoreIds[idx] == i) {
-                    idx++;
-                } else {
-                    alwaysUnmanagedCores.push_back(i);
-                }
-            }
         }
     }
 
     for (int coreId : managedCoreIds) {
         struct CoreInfo* core = new CoreInfo(coreId);
-        unmanagedCores.push_back(core);
         coreIdToCore[coreId] = core;
     }
 
@@ -203,7 +183,7 @@ CoreArbiterServer::CoreArbiterServer(std::string socketPath,
         LOG(ERROR, "Error on global stats mmap: %s", strerror(errno));
         exit(-1);
     }
-    stats->numUnoccupiedCores = (uint32_t)unmanagedCores.size();
+    stats->numUnoccupiedCores = (uint32_t)coreIdToCore.size();
 
     // Set up unix domain socket
     listenSocket = sys->socket(AF_UNIX, SOCK_STREAM, 0);
@@ -374,14 +354,13 @@ CoreArbiterServer::endArbitration() {
 bool
 CoreArbiterServer::handleEvents() {
     struct epoll_event events[MAX_EPOLL_EVENTS];
-    uint64_t msSinceLastCpusetUpdate =
-        Cycles::toMilliseconds(Cycles::rdtsc() - unmanagedCpusetLastUpdate);
-    uint64_t nextCpusetUpdate =
-        msSinceLastCpusetUpdate >= cpusetUpdateTimeout
-            ? 0
-            : cpusetUpdateTimeout - msSinceLastCpusetUpdate;
+    uint64_t msSinceLastGC =
+        Cycles::toMilliseconds(Cycles::rdtsc() - lastGarbageCollectionTime);
+    uint64_t nextGC = msSinceLastGC >= cpusetUpdateTimeout
+                          ? 0
+                          : cpusetUpdateTimeout - msSinceLastGC;
     int numFds = sys->epoll_wait(epollFd, events, MAX_EPOLL_EVENTS,
-                                 static_cast<int>(nextCpusetUpdate));
+                                 static_cast<int>(nextGC));
     LOG(DEBUG, "SERVER: epoll_wait returned with %d file descriptors.", numFds);
     if (numFds < 0) {
         // Interrupted system calls are normal, so there is no need to log them
@@ -451,32 +430,12 @@ CoreArbiterServer::handleEvents() {
     }
 
     // Update the unmanaged cpuset if we haven't in a while
-    msSinceLastCpusetUpdate =
-        Cycles::toMilliseconds(Cycles::rdtsc() - unmanagedCpusetLastUpdate);
-    if (msSinceLastCpusetUpdate >= cpusetUpdateTimeout) {
+    msSinceLastGC =
+        Cycles::toMilliseconds(Cycles::rdtsc() - lastGarbageCollectionTime);
+    if (msSinceLastGC >= cpusetUpdateTimeout) {
         uint64_t now = Cycles::rdtsc();
-
-        for (auto coreIter = managedCores.begin();
-             coreIter != managedCores.end();) {
-            struct CoreInfo* core = *coreIter;
-            // Remove unrelated threads that may have arisen if some core did a
-            // std::thread creation.
-            if (core->managedThread) {
-                removeUnmanagedThreadsFromCore(core);
-            }
-            if (!core->managedThread &&
-                Cycles::toMilliseconds(now - core->threadRemovalTime) >=
-                    cpusetUpdateTimeout) {
-                // This core hasn't been used as an managed core in a while,
-                // so we'll move it to the unmanaged cpuset
-                LOG(NOTICE, "Moving core %d to the unmanaged cpuset", core->id);
-                managedCores.erase(coreIter);
-                unmanagedCores.push_back(core);
-            } else {
-                coreIter++;
-            }
-        }
-        unmanagedCpusetLastUpdate = now;
+        coreSegregator->garbageCollect();
+        lastGarbageCollectionTime = now;
     }
 
     return true;
@@ -639,6 +598,9 @@ CoreArbiterServer::threadBlocking(int socket) {
                 .coreReleaseRequested;
         if (coreReleaseRequested) {
             LOG(NOTICE, "Removing thread %d from core %d", thread->id, coreId);
+            // TODO: Make sure that this variable is either removed or all
+            // places are updated.
+            thread->core->coreReleaseRequested = false;
             removeThreadFromManagedCore(thread, false);
             process->stats->threadCommunicationBlocks[coreId]
                 .coreReleaseRequested = false;
@@ -826,6 +788,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
     // scheduled onto the core.
     thread->process->coresPreemptedFrom[thread->core] = thread;
 
+    thread->core->coreReleaseRequested = false;
     removeThreadFromManagedCore(thread);
     changeThreadState(thread, RUNNING_PREEMPTED);
     process->stats->preemptedCount++;
@@ -950,15 +913,59 @@ CoreArbiterServer::findGoodCoreForProcess(
     for (struct CoreInfo* candidate : candidates) {
         availableManagedCoreIds.insert(candidate->id);
     }
-    // First look for a core which is the hypertwin of one of this
-    // process's existing cores
+
+    // First look for a core which is the hypertwin of one of this process's
+    // existing cores, if that core is available for scheduling.
+    int numOwnedCores = static_cast<int>(process->logicallyOwnedCores.size());
+    // Invariant: A process with a even number of cores has both hypertwins, so
+    // looking for hypertwins only applies to odd numbers.
+    if (numOwnedCores > 0 && (numOwnedCores & 1)) {
+        int hyperId = -1;
+        // There should be exactly one core in logicallyOwnedCores with no
+        // hypertwin; we just need to find its ID.
+        // TODO: Handle the case where the lone core has a non-scheduleable
+        // hypertwin. Currently we return NULL in this case.
+        for (CoreInfo* core : process->logicallyOwnedCores) {
+            hyperId = topology.coreToHypertwin[core->id];
+            if (coreIdToCore.find(hyperId) == coreIdToCore.end()) {
+                return NULL;
+            }
+            if (process->logicallyOwnedCores.find(coreIdToCore[hyperId]) !=
+                process->logicallyOwnedCores.end()) {
+                hyperId = -1;
+            } else {
+                break;
+            }
+        }
+
+        // If we have reached this point, then we presume that the hypertwin is
+        // available for scheduling.
+        CoreInfo* desiredCore = coreIdToCore[hyperId];
+        // This desired core is in one of two states.
+        // 1) It is owned by another process.
+        // 2) It is part of the candidates list.
+        auto it = std::find(candidates.begin(), candidates.end(), desiredCore);
+        if (it != candidates.end()) {
+            candidates.erase(it);
+        } else {
+            ProcessInfo* formerOwner = desiredCore->owner;
+            if (formerOwner != process) {
+                ProcessInfo* formerOwner = desiredCore->owner;
+                formerOwner->logicallyOwnedCores.erase(desiredCore);
+                formerOwner->logicallyOwnedCores.insert(
+                    findGoodCoreForProcess(formerOwner, candidates));
+            }
+        }
+        return desiredCore;
+    }
+
     for (struct CoreInfo* candidate : candidates) {
         LOG(DEBUG, "Considering candidate %d, hypertwin of %d", candidate->id,
-            getHyperTwin(candidate->id));
-        if (coresOwnedByProcess.find(getHyperTwin(candidate->id)) !=
+            topology.coreToHypertwin[candidate->id]);
+        if (coresOwnedByProcess.find(topology.coreToHypertwin[candidate->id]) !=
             coresOwnedByProcess.end()) {
             LOG(NOTICE, "candidate %d, hypertwin of %d has been selected",
-                candidate->id, getHyperTwin(candidate->id));
+                candidate->id, topology.coreToHypertwin[candidate->id]);
             candidates.erase(
                 std::find(candidates.begin(), candidates.end(), candidate));
             return candidate;
@@ -966,10 +973,22 @@ CoreArbiterServer::findGoodCoreForProcess(
     }
 
     // Next look for a core whose hypertwin is also in the set of
-    // available cores.
+    // currently available cores.
     for (struct CoreInfo* candidate : candidates) {
-        if (availableManagedCoreIds.find(getHyperTwin(candidate->id)) !=
+        int hyperId = topology.coreToHypertwin[candidate->id];
+        if (availableManagedCoreIds.find(hyperId) !=
             availableManagedCoreIds.end()) {
+            candidates.erase(
+                std::find(candidates.begin(), candidates.end(), candidate));
+            return candidate;
+        }
+    }
+
+    // Next look for a core whose hypertwin is in the set of possibly available
+    // cores.
+    for (struct CoreInfo* candidate : candidates) {
+        int hyperId = topology.coreToHypertwin[candidate->id];
+        if (coreIdToCore.find(hyperId) != coreIdToCore.end()) {
             candidates.erase(
                 std::find(candidates.begin(), candidates.end(), candidate));
             return candidate;
@@ -1070,11 +1089,10 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
         }
 
         for (CoreInfo* core : process->logicallyOwnedCores) {
-            if (core->owner == process) {
-                continue;
-            }
-            if (core->owner != NULL) {
-                requestCoreRelease(core);
+            if (core->managedThread != NULL) {
+                if (core->managedThread->process != process) {
+                    requestCoreRelease(core);
+                }
                 continue;
             }
 
@@ -1114,7 +1132,7 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
                 // receive a hangup message from the thread's socket at which
                 // point distributeCores() will be called again and this core
                 // will be filled.
-                LOG(DEBUG,
+                LOG(ERROR,
                     "Skipping assignment of core %d because were were "
                     "unable to write to it\n",
                     core->id);
@@ -1143,7 +1161,7 @@ CoreArbiterServer::distributeCores() {
     }
 
     LOG(DEBUG, "Distributing cores among threads...");
-    size_t maxManagedCores = managedCores.size() + unmanagedCores.size();
+    size_t maxManagedCores = coreIdToCore.size();
 
     ////////////////////////////////////////////////////////////////////////////////
     // New implementation starts here
@@ -1170,7 +1188,7 @@ CoreArbiterServer::distributeCores() {
             struct ProcessInfo* process = processes.front();
             processes.pop_front();
 
-            if (processToCoreCount[process] >
+            if (processToCoreCount[process] >=
                 process->desiredCorePriorities[priority]) {
                 continue;
             }
@@ -1200,7 +1218,7 @@ CoreArbiterServer::distributeCores() {
     // Compute the number of cores that each process can have, then check
     // whether hypertwin constraints are satisfied.
     std::unordered_map<struct ProcessInfo*, uint32_t> processToCoreCount;
-    int lastProcessGrantedIndex = 0;
+    int lastProcessGrantedIndex = -1;
     for (int i = 0;
          i < static_cast<int>(std::min(maxManagedCores, clientQueue.size()));
          i++) {
@@ -1211,6 +1229,12 @@ CoreArbiterServer::distributeCores() {
         lastProcessGrantedIndex = i;
     }
 
+    // We found no core requests from any processes, so there's nothing to do.
+    if (lastProcessGrantedIndex == -1) {
+        LOG(WARNING,
+            "distributeCores invoked with no core requests from any process");
+        return;
+    }
     // Check whether hypertwin constraints are satisfied, and reduce if
     // unsatisfied. Assign leftover hypertwins to processes further down the
     // priority list. NB: In doing so, we may end up violating more hypertwin
@@ -1247,17 +1271,19 @@ CoreArbiterServer::distributeCores() {
             LOG(ERROR, "Process %d joined sorted processes", it->first->id);
         }
     }
-    // Sort by processes by descending number of cores assigned.
+    // Sort processes by descending number of cores assigned.
     std::sort(sortedProcesses.begin(), sortedProcesses.end(),
               [&processToCoreCount](ProcessInfo* a, ProcessInfo* b) {
                   return processToCoreCount[a] > processToCoreCount[b];
               });
 
-    // Pull out hyperthread counts from machine topology, reducing the count by
-    // one for the socket containing the always unmanaged core.
+    // Pull out hyperthread counts from machine topology
     std::unordered_map<int, uint32_t> socketToNumCores;
     for (Topology::NUMANode node : topology.nodes) {
-        socketToNumCores[node.id] = static_cast<uint32_t>(node.cores.size());
+        for (int coreId : node.cores) {
+            if (coreIdToCore.find(coreId) != coreIdToCore.end())
+                socketToNumCores[node.id]++;
+        }
     }
 
     // Resulting mapping from processes to sockets.
@@ -1292,6 +1318,9 @@ CoreArbiterServer::distributeCores() {
     std::unordered_map<int, std::deque<CoreInfo*>> socketToCoresAvailable;
     for (Topology::NUMANode node : topology.nodes) {
         for (int coreId : node.cores) {
+            // Skip cores which are not available to this core arbiter.
+            if (coreIdToCore.find(coreId) == coreIdToCore.end())
+                continue;
             // Rely on implicit construction of the object with
             // std::unordered_map's operator[]
             socketToCoresAvailable[node.id].push_back(coreIdToCore[coreId]);
@@ -1329,10 +1358,24 @@ CoreArbiterServer::distributeCores() {
             // it back unless the other process also owns the hypertwin of
             // this core already.
             if (desiredCore->owner != process && desiredCore->owner != NULL) {
-                // Other process also owns hypertwin, so we give up on taking
-                // this core.
-                if (coreIdToCore[getHyperTwin(desiredCore->id)]->owner ==
-                    desiredCore->owner)
+                // If the other process also owns the hypertwin of this core,
+                // we give up on taking this core.
+                // TODO: Consider what happens if the hypertwin is not
+                // available to be managed by the arbiter (therefore not in
+                // CoreIdToCore). Should we still try to claim the core if the
+                // HT is not available at all?
+                // I think it depends on whether this is the last core that the
+                // process is claiming.
+                // Also, what if we (core arbiter) owns two cores on a socket
+                // but they're not hypertwins of each other? In that case,
+                // assigning the process to the socket would fail but we
+                // wouldn't know it.
+                // TODO: Ask John what he thinks about this case.
+                // Here the assumption is that we owned this core previously,
+                // so the bigger problem is going to be later on.
+                int hypertwin = topology.coreToHypertwin[desiredCore->id];
+                if (coreIdToCore.find(hypertwin) != coreIdToCore.end() &&
+                    coreIdToCore[hypertwin]->owner == desiredCore->owner)
                     continue;
                 ProcessInfo* formerOwner = desiredCore->owner;
                 formerOwner->logicallyOwnedCores.erase(desiredCore);
@@ -1354,8 +1397,12 @@ CoreArbiterServer::distributeCores() {
             // currently be owned by a different process (it should be an
             // invariant that they are the last core of a different process),
             // and we have to account for hypertwin constraints.
-            process->logicallyOwnedCores.insert(
-                findGoodCoreForProcess(process, candidateCores));
+            CoreInfo* chosenCore =
+                findGoodCoreForProcess(process, candidateCores);
+
+            LOG(ERROR, "Process %d gains core %d", process->id, chosenCore->id);
+            process->logicallyOwnedCores.insert(chosenCore);
+            chosenCore->owner = process;
             coresClaimed++;
         }
     }

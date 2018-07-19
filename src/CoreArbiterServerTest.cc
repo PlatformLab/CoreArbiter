@@ -17,16 +17,16 @@
 #define private public
 
 #include "CoreArbiterServer.h"
+#include "CpusetCoreSegregator.h"
 #include "Logger.h"
 #include "MockSyscall.h"
+#include "Topology.h"
 
 #undef private
 #include "PerfUtils/Util.h"
 #include "gtest/gtest.h"
 
 namespace CoreArbiter {
-
-using PerfUtils::Util::getHyperTwin;
 
 class CoreArbiterServerTest : public ::testing::Test {
   public:
@@ -35,6 +35,7 @@ class CoreArbiterServerTest : public ::testing::Test {
     std::string memPath;
     int clientSocket;
     int serverSocket;
+    Topology topology;
 
     typedef CoreArbiterServer::ThreadInfo ThreadInfo;
     typedef CoreArbiterServer::ProcessInfo ProcessInfo;
@@ -43,7 +44,8 @@ class CoreArbiterServerTest : public ::testing::Test {
 
     CoreArbiterServerTest()
         : socketPath("/tmp/CoreArbiter/testsocket"),
-          memPath("/tmp/CoreArbiter/testmem") {
+          memPath("/tmp/CoreArbiter/testmem"),
+          topology() {
         Logger::setLogLevel(ERROR);
 
         sys = new MockSyscall();
@@ -89,13 +91,6 @@ class CoreArbiterServerTest : public ::testing::Test {
             process->stats->preemptedCount++;
         }
         return thread;
-    }
-
-    void makeUnmanagedCoresManaged(CoreArbiterServer& server) {
-        server.managedCores.insert(server.managedCores.end(),
-                                   server.unmanagedCores.begin(),
-                                   server.unmanagedCores.end());
-        server.unmanagedCores.erase(server.unmanagedCores.begin());
     }
 };
 
@@ -162,8 +157,7 @@ TEST_F(CoreArbiterServerTest, defaultCores) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
 
     CoreArbiterServer server(socketPath, memPath, {}, false);
-    ASSERT_EQ(server.unmanagedCores.size(),
-              std::thread::hardware_concurrency() - 1);
+    ASSERT_EQ(server.coreIdToCore.size(), server.topology.getNumCores() - 1);
 
     CoreArbiterServer::testingSkipCpusetAllocation = false;
 }
@@ -174,7 +168,6 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
     int processId = 1;
     int threadId = 2;
     int socket = 3;
@@ -205,15 +198,14 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     // If the thread is running on a managed core a block call should fail if
     // the server hasn't requested cores back
     processStats.numBlockedThreads = 0;
-    thread->core = server.managedCores[0];
+    thread->core = server.coreIdToCore[1];
     thread->state = CoreArbiterServer::RUNNING_MANAGED;
     server.threadBlocking(socket);
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);
     ASSERT_EQ(processStats.numBlockedThreads, 0u);
 
     // If the server has requested cores back, this call succeeds
-    processStats.threadCommunicationBlocks[server.managedCores[0]->id]
-        .coreReleaseRequested = true;
+    processStats.threadCommunicationBlocks[1].coreReleaseRequested = true;
     server.threadBlocking(socket);
     ASSERT_EQ(thread->state, CoreArbiterServer::BLOCKED);
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
@@ -230,19 +222,17 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
 
     pid_t processId = 0;
     pid_t threadId = 1;
     int socket = 2;
     ProcessStats processStats;
-    processStats.threadCommunicationBlocks[server.managedCores[0]->id]
-        .coreReleaseRequested = true;
+    processStats.threadCommunicationBlocks[1].coreReleaseRequested = true;
     ProcessInfo* process = createProcess(server, processId, &processStats);
     ThreadInfo* thread = createThread(server, threadId, process, socket,
                                       CoreArbiterServer::RUNNING_PREEMPTED);
-    thread->corePreemptedFrom = server.managedCores[0];
-    process->coresPreemptedFrom[server.managedCores[0]] = thread;
+    thread->corePreemptedFrom = server.coreIdToCore[1];
+    process->coresPreemptedFrom[server.coreIdToCore[1]] = thread;
 
     // A preempted thread blocking counts as releasing a core
     server.threadBlocking(socket);
@@ -264,7 +254,6 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
 
     pid_t processId = 0;
     pid_t threadId1 = 1;
@@ -275,10 +264,10 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     ProcessInfo* process = createProcess(server, processId, &processStats);
     ThreadInfo* thread1 = createThread(server, threadId1, process, socket1,
                                        CoreArbiterServer::RUNNING_MANAGED,
-                                       server.managedCores[0]);
+                                       server.coreIdToCore[1]);
     ThreadInfo* thread2 = createThread(server, threadId2, process, socket2,
                                        CoreArbiterServer::RUNNING_PREEMPTED);
-    thread2->corePreemptedFrom = server.managedCores[0];
+    thread2->corePreemptedFrom = server.coreIdToCore[1];
 
     // When a thread blocks without being asked to, it is a no-op.
     server.threadBlocking(socket1);
@@ -299,7 +288,6 @@ TEST_F(CoreArbiterServerTest, coresRequested_flags) {
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
 
     // Create a process taht we will update the requests for.
     ProcessStats processStats;
@@ -349,7 +337,6 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
 
     ProcessStats processStats;
     ProcessInfo* process = createProcess(server, 1, &processStats);
@@ -417,10 +404,18 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     // cores. 2) Request a total number of cores larger than the number of
     // available cores, at equal priority. 3) Request a total number of cores
     // larger than the number of available cores, at different priorities.
+
+    // Form a topology and set the topology
+    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
+    std::unordered_map<int, int> coreToHypertwin{
+        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
+    topology = Topology({nn0}, coreToHypertwin);
+
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
-    CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, false);
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, topology,
+                             new CpusetCoreSegregator(), false);
 
     // Set up two processes
     std::vector<ProcessInfo*> processes;
@@ -441,14 +436,14 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     processes[1]->desiredCorePriorities[1] = 1;
 
     server.distributeCores();
-    EXPECT_EQ(2, processes[0]->logicallyOwnedCores.size());
-    EXPECT_EQ(1, processes[1]->logicallyOwnedCores.size());
+    EXPECT_EQ(2U, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
     auto it = processes[0]->logicallyOwnedCores.begin();
     int core1 = (*it)->id;
     it++;
     int core2 = (*it)->id;
     printf("Core1 = %d, Core2 = %d\n", core1, core2);
-    EXPECT_EQ(core1, getHyperTwin(core2));
+    EXPECT_EQ(core1, topology.coreToHypertwin[core2]);
 
     // Make sure we don't get more cores than we asked for, just because more
     // are available.
@@ -456,8 +451,8 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     processes[1]->desiredCorePriorities[1] = 1;
 
     server.distributeCores();
-    EXPECT_EQ(1, processes[0]->logicallyOwnedCores.size());
-    EXPECT_EQ(1, processes[1]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
 
     // Requesting more than the cores we have
     processes[0]->desiredCorePriorities[1] = 4;
@@ -485,7 +480,14 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, false);
+    // Form a topology and set the topology
+    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
+    std::unordered_map<int, int> coreToHypertwin{
+        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
+    topology = Topology({nn0}, coreToHypertwin);
+
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, topology,
+                             new CpusetCoreSegregator(), false);
     std::vector<ProcessInfo*> processes;
     for (int i = 0; i < 2; i++) {
         ProcessInfo* process = createProcess(server, i, new ProcessStats());
@@ -501,7 +503,8 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
     processes[1]->desiredCorePriorities[7] = 2;
 
     server.distributeCores();
-    for (CoreInfo* core : server.managedCores) {
+    for (auto coreIdAndCore : server.coreIdToCore) {
+        CoreInfo* core = coreIdAndCore.second;
         ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     }
 
@@ -519,7 +522,13 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+    // Form a topology and set the topology
+    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
+    std::unordered_map<int, int> coreToHypertwin{
+        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
+    topology = Topology({nn0}, coreToHypertwin);
+    CoreArbiterServer server(socketPath, memPath, {0, 1}, topology,
+                             new CpusetCoreSegregator, false);
 
     // Set up two processes who each want two cores at the lowest priority
     std::vector<ProcessInfo*> processes;
@@ -540,7 +549,8 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     ASSERT_EQ(processes[0]->stats->numOwnedCores, 1u);
     ASSERT_EQ(processes[1]->stats->numOwnedCores, 1u);
     std::unordered_map<CoreInfo*, ThreadInfo*> savedCoreToThread;
-    for (CoreInfo* core : server.managedCores) {
+    for (auto coreIdAndCore : server.coreIdToCore) {
+        CoreInfo* core = coreIdAndCore.second;
         ASSERT_TRUE(core->managedThread != NULL);
         savedCoreToThread[core] = core->managedThread;
     }
@@ -550,14 +560,15 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
     server.distributeCores();
     ASSERT_EQ(processes[0]->stats->numOwnedCores, 1u);
     ASSERT_EQ(processes[1]->stats->numOwnedCores, 1u);
-    for (CoreInfo* core : server.managedCores) {
+    for (auto coreIdAndCore : server.coreIdToCore) {
+        CoreInfo* core = coreIdAndCore.second;
         ASSERT_EQ(core->managedThread, savedCoreToThread[core]);
     }
 
     // Don't give processes more cores at this priority than they've asked for
-    ThreadInfo* removedThread = server.managedCores[0]->managedThread;
+    ThreadInfo* removedThread = server.coreIdToCore[1]->managedThread;
     removedThread->process->desiredCorePriorities[7] = 0;
-    server.managedCores[0]->managedThread = NULL;
+    server.coreIdToCore[1]->managedThread = NULL;
     server.distributeCores();
     ProcessInfo* otherProcess =
         removedThread->process == processes[0] ? processes[1] : processes[0];
@@ -577,7 +588,14 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4}, false);
+    // Form a topology and set the topology
+    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
+    std::unordered_map<int, int> coreToHypertwin{
+        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
+    topology = Topology({nn0}, coreToHypertwin);
+
+    CoreArbiterServer server(socketPath, memPath, {0, 1, 2, 3}, topology,
+                             new CpusetCoreSegregator(), false);
 
     // Set up two processes with four threads each, one requesting at a higher
     // nice-to-have priority than the other
@@ -604,17 +622,13 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     // Higher priority threads preempt lower priority threads
     highPriorityProcess->desiredCorePriorities[6] = 4;
     server.distributeCores();
-    ASSERT_TRUE(lowPriorityProcess->stats
-                    ->threadCommunicationBlocks[server.managedCores[0]->id]
+    ASSERT_TRUE(lowPriorityProcess->stats->threadCommunicationBlocks[0]
                     .coreReleaseRequested ||
-                lowPriorityProcess->stats
-                    ->threadCommunicationBlocks[server.managedCores[1]->id]
+                lowPriorityProcess->stats->threadCommunicationBlocks[1]
                     .coreReleaseRequested ||
-                lowPriorityProcess->stats
-                    ->threadCommunicationBlocks[server.managedCores[2]->id]
+                lowPriorityProcess->stats->threadCommunicationBlocks[2]
                     .coreReleaseRequested ||
-                lowPriorityProcess->stats
-                    ->threadCommunicationBlocks[server.managedCores[3]->id]
+                lowPriorityProcess->stats->threadCommunicationBlocks[3]
                     .coreReleaseRequested);
     ASSERT_EQ(server.timerFdToInfo.size(), 1u);
     ASSERT_EQ(highPriorityProcess->stats->numOwnedCores, 3u);
@@ -633,73 +647,16 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     }
 }
 
-TEST_F(CoreArbiterServerTest, distributeCores_scaleUnmanagedCore) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeManagedCores = true;
-
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
-
-    ProcessStats processStats;
-    ProcessInfo* process = createProcess(server, 1, &processStats);
-    createThread(server, 1, process, 1, CoreArbiterServer::BLOCKED);
-    process->desiredCorePriorities[0] = 1;
-    server.corePriorityQueues[0].push_back(process);
-
-    ASSERT_EQ(server.managedCores.size(), 0u);
-    ASSERT_EQ(server.unmanagedCores.size(), 1u);
-
-    // Scale up
-    server.distributeCores();
-    ASSERT_EQ(server.managedCores.size(), 1u);
-    ASSERT_EQ(server.unmanagedCores.size(), 0u);
-
-    // distributeCores() shouldn't cause unmanaged cpuset to scale down
-    process->desiredCorePriorities[0] = 0;
-    server.corePriorityQueues[0].pop_front();
-    server.managedCores[0]->managedThread = NULL;
-    server.distributeCores();
-    ASSERT_EQ(server.managedCores.size(), 1u);
-    ASSERT_EQ(server.unmanagedCores.size(), 0u);
-
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeManagedCores = false;
-}
-
-TEST_F(CoreArbiterServerTest, handleEvents_scaleUnmanagedCore) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
-    CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeManagedCores = true;
-
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
-
-    // The server should wake up to move its unused managed cores to the
-    // unmanaged cpuset
-    uint64_t now = Cycles::rdtsc();
-    server.unmanagedCpusetLastUpdate = now;
-    server.managedCores[0]->threadRemovalTime = now;
-    server.handleEvents();
-    ASSERT_EQ(server.managedCores.size(), 0u);
-    ASSERT_EQ(server.unmanagedCores.size(), 1u);
-
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
-    CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeManagedCores = false;
-}
-
 TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
     CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
     server.preemptionTimeout = 1;  // For faster testing
 
     ProcessStats processStats;
-    CoreInfo* core = server.managedCores[0];
+    CoreInfo* core = server.coreIdToCore[1];
 
     ProcessInfo* process = createProcess(server, 1, &processStats);
     ThreadInfo* thread = createThread(server, 1, process, 1,
@@ -718,6 +675,7 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
     // If client is uncooperative, the thread should be removed from its core
     thread->core = core;
     core->managedThread = thread;
+    core->coreReleaseRequested = false;
     server.requestCoreRelease(core);
     server.handleEvents();
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_PREEMPTED);
@@ -735,10 +693,9 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_invalidateOldTimeout) {
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
     CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
-    makeUnmanagedCoresManaged(server);
 
     ProcessStats processStats;
-    CoreInfo* core = server.managedCores[0];
+    CoreInfo* core = server.coreIdToCore[1];
 
     ProcessInfo* process = createProcess(server, 1, &processStats);
     ThreadInfo* thread = createThread(server, 1, process, 1,
@@ -764,13 +721,12 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     sys->closeErrno = 1;
 
     CoreArbiterServer server(socketPath, memPath, {1}, false);
-    makeUnmanagedCoresManaged(server);
 
     // Set up a process with three threads: one managed, one preempted, and
     // one blocked
     ProcessStats processStats;
     processStats.preemptedCount = 1;
-    CoreInfo* core = server.managedCores[0];
+    CoreInfo* core = server.coreIdToCore[1];
     ProcessInfo* process = createProcess(server, 1, &processStats);
     ThreadInfo* managedThread = createThread(
         server, 1, process, 1, CoreArbiterServer::RUNNING_MANAGED, core);
@@ -789,8 +745,8 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
     ASSERT_EQ(process->stats->unpreemptedCount, 0u);
     ASSERT_EQ(server.processIdToInfo.size(), 1u);
 
-    preemptedThread->corePreemptedFrom = server.managedCores[0];
-    process->coresPreemptedFrom[server.managedCores[0]] = preemptedThread;
+    preemptedThread->corePreemptedFrom = core;
+    process->coresPreemptedFrom[core] = preemptedThread;
     server.cleanupConnection(preemptedThread->socket);
     ASSERT_TRUE(process->threadStateToSet[CoreArbiterServer::RUNNING_PREEMPTED]
                     .empty());
