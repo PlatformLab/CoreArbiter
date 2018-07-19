@@ -1141,6 +1141,26 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
     }
 }
 
+std::deque<CoreArbiterServer::ProcessInfo*>
+CoreArbiterServer::getProcessesOrderedByCoreCount(
+    const std::unordered_map<struct ProcessInfo*, uint32_t>
+        processToCoreCount) {
+    std::deque<CoreArbiterServer::ProcessInfo*> sortedProcesses;
+    for (auto it = processToCoreCount.begin(); it != processToCoreCount.end();
+         it++) {
+        if (it->second > 0) {
+            sortedProcesses.push_back(it->first);
+            LOG(ERROR, "Process %d joined sorted processes", it->first->id);
+        }
+    }
+    // Sort processes by descending number of cores assigned.
+    std::sort(sortedProcesses.begin(), sortedProcesses.end(),
+              [&processToCoreCount](ProcessInfo* a, ProcessInfo* b) {
+                  return processToCoreCount.at(a) > processToCoreCount.at(b);
+              });
+    return sortedProcesses;
+}
+
 /**
  * This method handles all the logic of deciding which processes should receive
  * which cores. It delegates the operations for making actual core assignments
@@ -1263,19 +1283,8 @@ CoreArbiterServer::distributeCores() {
         }
     }
 
-    std::deque<ProcessInfo*> sortedProcesses;
-    for (auto it = processToCoreCount.begin(); it != processToCoreCount.end();
-         it++) {
-        if (it->second > 0) {
-            sortedProcesses.push_back(it->first);
-            LOG(ERROR, "Process %d joined sorted processes", it->first->id);
-        }
-    }
-    // Sort processes by descending number of cores assigned.
-    std::sort(sortedProcesses.begin(), sortedProcesses.end(),
-              [&processToCoreCount](ProcessInfo* a, ProcessInfo* b) {
-                  return processToCoreCount[a] > processToCoreCount[b];
-              });
+    std::deque<ProcessInfo*> sortedProcesses =
+        getProcessesOrderedByCoreCount(processToCoreCount);
 
     // Pull out hyperthread counts from machine topology
     std::unordered_map<int, uint32_t> socketToNumCores;
@@ -1327,10 +1336,10 @@ CoreArbiterServer::distributeCores() {
         }
     }
 
+    sortedProcesses = getProcessesOrderedByCoreCount(processToCoreCount);
     // Perform actual assignment of cores to processes within each socket
-    for (auto kv : processToSocket) {
-        ProcessInfo* process = kv.first;
-        int numaNode = kv.second;
+    for (ProcessInfo* process : sortedProcesses) {
+        int numaNode = processToSocket[process];
         std::deque<CoreInfo*>& candidateCores =
             socketToCoresAvailable[numaNode];
         int numCores = std::min(processToCoreCount[process],

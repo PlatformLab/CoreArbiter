@@ -311,6 +311,9 @@ class CoreArbiterServer {
         std::unordered_map<int, uint32_t>& socketToNumCores,
         std::unordered_map<struct ProcessInfo*, int>& processToSocket);
 
+    std::deque<ProcessInfo*> getProcessesOrderedByCoreCount(
+        const std::unordered_map<struct ProcessInfo*, uint32_t>
+            processToCoreCount);
     void makeCoreAssignmentsConsistent();
 
     void installSignalHandler();
