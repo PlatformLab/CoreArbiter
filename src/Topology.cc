@@ -19,7 +19,7 @@ const char* Topology::numaNamesPath = "/sys/devices/system/node/possible";
  *     Cores not specified here will not be exposed in the resulting topology.
  *     Ignored if empty.
  */
-Topology::Topology(std::unordered_set<int> allowedCoreIds) {
+Topology::Topology() {
     std::vector<int> nodeNames = readRanges(numaNamesPath);
 
     for (int n : nodeNames) {
@@ -31,15 +31,6 @@ Topology::Topology(std::unordered_set<int> allowedCoreIds) {
         // warning.
         sprintf(path, "/sys/devices/system/node/node%d/cpulist", n);
         node.cores = readRanges(path);
-        if (!allowedCoreIds.empty()) {
-            for (int i = static_cast<int>(node.cores.size()) - 1; i >= 0; i--) {
-                if (allowedCoreIds.find(node.cores[i]) ==
-                    allowedCoreIds.end()) {
-                    node.cores.erase(node.cores.begin() + i);
-                }
-            }
-        }
-
         for (int c : node.cores) {
             coreToSocket[c] = n;
             coreToHypertwin[c] = getHyperTwin(c);
@@ -65,6 +56,18 @@ Topology::Topology(std::vector<NUMANode> nodes,
             coreToSocket[c] = node.id;
         }
     }
+}
+
+/**
+ * Compute the total number of schedulable units based on this topology.
+ */
+int
+Topology::getNumCores() {
+    int numCores = 0;
+    for (NUMANode node : nodes) {
+        numCores += node.cores.size();
+    }
+    return numCores;
 }
 
 }  // namespace CoreArbiter

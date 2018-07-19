@@ -17,7 +17,6 @@
 #define CORE_ARBITER_TOPOLOGY_H
 
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace CoreArbiter {
@@ -41,9 +40,10 @@ struct Topology {
         std::vector<int> cores;
     };
 
-    Topology(std::unordered_set<int> allowedCoreIds);
+    Topology();
     Topology(std::vector<NUMANode> nodes,
              std::unordered_map<int, int> coreToHypertwin);
+    int getNumCores();
 
     /**
      * Path for getting names of NUMA nodes.
