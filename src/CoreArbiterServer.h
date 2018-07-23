@@ -102,12 +102,6 @@ class CoreArbiterServer {
         // intended assignment. NULL means this core is unmanaged.
         ProcessInfo* owner;
 
-        // The name of this core's managed cpuset tasks file.
-        std::string cpusetFilename;
-
-        // A stream pointing to the tasks file of this core's managed cpuset.
-        std::ofstream cpusetFile;
-
         // The last time (in cycles) that this core had a thread removed from
         // it. If there is no thread running on this core, this value tells us
         // how long the core has been unoccupied.
@@ -214,9 +208,9 @@ class CoreArbiterServer {
         // indexes mean higher priority.
         std::vector<uint32_t> desiredCorePriorities;
 
-        // True means that this process is willing to share its last hypertwin
-        // with another process.
-        bool willShareLastCore;
+        // True means that this process is willing to share hypertwins with
+        // other processes.
+        bool willShareCores;
 
         // True means that this process is unwilling to spread its cores across
         // multiple NUMA nodes.
@@ -242,7 +236,7 @@ class CoreArbiterServer {
             // TODO: Decide whether we want to instead prefer a socket with
             // more free logically cores.
             if (logicallyOwnedCores.empty())
-                return 0;
+                return t.nodes[0].id;
             return t.coreToSocket.at((*logicallyOwnedCores.begin())->id);
         }
 
@@ -256,7 +250,7 @@ class CoreArbiterServer {
 
         ProcessInfo()
             : desiredCorePriorities(NUM_PRIORITIES),
-              willShareLastCore(true),
+              willShareCores(true),
               singleNUMAOnly(true) {}
 
         ProcessInfo(pid_t id, int sharedMemFd, struct ProcessStats* stats)
@@ -264,7 +258,7 @@ class CoreArbiterServer {
               sharedMemFd(sharedMemFd),
               stats(stats),
               desiredCorePriorities(NUM_PRIORITIES),
-              willShareLastCore(true),
+              willShareCores(true),
               singleNUMAOnly(true) {}
     };
 
@@ -293,15 +287,10 @@ class CoreArbiterServer {
     bool readData(int socket, void* buf, size_t numBytes, std::string err);
     bool sendData(int socket, void* buf, size_t numBytes, std::string err);
 
-    void createCpuset(std::string dirName, std::string cores, std::string mems);
-    void moveProcsToCpuset(std::string fromPath, std::string toPath);
-    void removeUnmanagedThreadsFromCore(struct CoreInfo* core);
-    void removeOldCpusets(std::string arbiterCpusetPath);
     bool moveThreadToManagedCore(struct ThreadInfo* thread,
                                  struct CoreInfo* core);
     void removeThreadFromManagedCore(struct ThreadInfo* thread,
                                      bool changeCpuset = true);
-    void updateUnmanagedCpuset();
     void changeThreadState(struct ThreadInfo* thread, ThreadState state);
 
     bool assignProcessesToSockets(
