@@ -17,7 +17,7 @@
 #define private public
 
 #include "CoreArbiterServer.h"
-#include "CpusetCoreSegregator.h"
+#include "FakeCoreSegregator.h"
 #include "Logger.h"
 #include "MockSyscall.h"
 #include "Topology.h"
@@ -36,6 +36,7 @@ class CoreArbiterServerTest : public ::testing::Test {
     int clientSocket;
     int serverSocket;
     Topology topology;
+    FakeCoreSegregator* fakeCoreSegregator;
 
     typedef CoreArbiterServer::ThreadInfo ThreadInfo;
     typedef CoreArbiterServer::ProcessInfo ProcessInfo;
@@ -45,11 +46,20 @@ class CoreArbiterServerTest : public ::testing::Test {
     CoreArbiterServerTest()
         : socketPath("/tmp/CoreArbiter/testsocket"),
           memPath("/tmp/CoreArbiter/testmem"),
-          topology() {
+          topology(),
+          fakeCoreSegregator(NULL) {
         Logger::setLogLevel(ERROR);
 
         sys = new MockSyscall();
         CoreArbiterServer::sys = sys;
+
+        // Default topology should work for most tests using a
+        // FakeCoreSegregator.
+        Topology::NUMANode nn0{0, {0, 1, 2, 3}};
+        std::unordered_map<int, int> coreToHypertwin{
+            {0, 1}, {1, 0}, {2, 3}, {3, 2}};
+        topology = Topology({nn0}, coreToHypertwin);
+        fakeCoreSegregator = new FakeCoreSegregator(topology);
 
         int fd[2];
         socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
@@ -61,6 +71,7 @@ class CoreArbiterServerTest : public ::testing::Test {
         close(clientSocket);
         close(serverSocket);
         delete sys;
+        delete fakeCoreSegregator;
     }
 
     /**
@@ -154,20 +165,17 @@ TEST_F(CoreArbiterServerTest, endArbitration) {
 }
 
 TEST_F(CoreArbiterServerTest, defaultCores) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
-
-    CoreArbiterServer server(socketPath, memPath, {}, false);
+    CoreArbiterServer server(socketPath, memPath, {}, topology,
+                             fakeCoreSegregator, false);
     ASSERT_EQ(server.coreIdToCore.size(), server.topology.getNumCores() - 1);
-
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    CoreArbiterServer server(socketPath, memPath, {1}, topology,
+                             fakeCoreSegregator, false);
     int processId = 1;
     int threadId = 2;
     int socket = 3;
@@ -210,18 +218,17 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     ASSERT_EQ(thread->state, CoreArbiterServer::BLOCKED);
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    CoreArbiterServer server(socketPath, memPath, {1}, topology,
+                             fakeCoreSegregator, false);
 
     pid_t processId = 0;
     pid_t threadId = 1;
@@ -241,19 +248,18 @@ TEST_F(CoreArbiterServerTest, threadBlocking_preemptedThread) {
     ASSERT_EQ(processStats.unpreemptedCount, 1u);
     ASSERT_EQ(processStats.numBlockedThreads, 1u);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    CoreArbiterServer server(socketPath, memPath, {1}, topology,
+                             fakeCoreSegregator, false);
 
     pid_t processId = 0;
     pid_t threadId1 = 1;
@@ -275,19 +281,18 @@ TEST_F(CoreArbiterServerTest, threadBlocking_movePreemptedThread) {
     ASSERT_EQ(thread2->state, CoreArbiterServer::RUNNING_PREEMPTED);
     ASSERT_EQ(process->stats->numOwnedCores, 1u);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, coresRequested_flags) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    CoreArbiterServer server(socketPath, memPath, {1}, topology,
+                             fakeCoreSegregator, false);
 
     // Create a process taht we will update the requests for.
     ProcessStats processStats;
@@ -331,12 +336,12 @@ TEST_F(CoreArbiterServerTest, coresRequested_flags) {
 }
 
 TEST_F(CoreArbiterServerTest, coresRequested) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    CoreArbiterServer server(socketPath, memPath, {1}, topology,
+                             fakeCoreSegregator, false);
 
     ProcessStats processStats;
     ProcessInfo* process = createProcess(server, 1, &processStats);
@@ -390,7 +395,6 @@ TEST_F(CoreArbiterServerTest, coresRequested) {
         ASSERT_EQ(process->desiredCorePriorities[i], coreRequest[i]);
     }
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
@@ -406,16 +410,10 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     // larger than the number of available cores, at different priorities.
 
     // Form a topology and set the topology
-    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
-    std::unordered_map<int, int> coreToHypertwin{
-        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
-    topology = Topology({nn0}, coreToHypertwin);
-
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, topology,
-                             new CpusetCoreSegregator(), false);
+                             fakeCoreSegregator, false);
 
     // Set up two processes
     std::vector<ProcessInfo*> processes;
@@ -459,10 +457,9 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     processes[1]->desiredCorePriorities[1] = 2;
 
     server.distributeCores();
-    EXPECT_EQ(2, processes[0]->logicallyOwnedCores.size());
-    EXPECT_EQ(1, processes[1]->logicallyOwnedCores.size());
+    EXPECT_EQ(2U, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
     // TODO: Add debug logging (RC Style) to examine the internals of the
@@ -476,18 +473,9 @@ TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
-    CoreArbiterServer::testingDoNotChangeManagedCores = true;
-
-    // Form a topology and set the topology
-    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
-    std::unordered_map<int, int> coreToHypertwin{
-        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
-    topology = Topology({nn0}, coreToHypertwin);
-
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, topology,
-                             new CpusetCoreSegregator(), false);
+                             fakeCoreSegregator, false);
     std::vector<ProcessInfo*> processes;
     for (int i = 0; i < 2; i++) {
         ProcessInfo* process = createProcess(server, i, new ProcessStats());
@@ -508,9 +496,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
         ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     }
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
-    CoreArbiterServer::testingDoNotChangeManagedCores = false;
 
     for (ProcessInfo* process : processes) {
         delete process->stats;
@@ -518,17 +504,10 @@ TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
-
-    // Form a topology and set the topology
-    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
-    std::unordered_map<int, int> coreToHypertwin{
-        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
-    topology = Topology({nn0}, coreToHypertwin);
     CoreArbiterServer server(socketPath, memPath, {0, 1}, topology,
-                             new CpusetCoreSegregator, false);
+                             fakeCoreSegregator, false);
 
     // Set up two processes who each want two cores at the lowest priority
     std::vector<ProcessInfo*> processes;
@@ -574,7 +553,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
         removedThread->process == processes[0] ? processes[1] : processes[0];
     ASSERT_EQ(otherProcess->stats->numOwnedCores, 2u);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 
@@ -584,18 +562,10 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveSinglePriority) {
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
-
-    // Form a topology and set the topology
-    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
-    std::unordered_map<int, int> coreToHypertwin{
-        {0, 1}, {1, 0}, {2, 3}, {3, 2}};
-    topology = Topology({nn0}, coreToHypertwin);
-
     CoreArbiterServer server(socketPath, memPath, {0, 1, 2, 3}, topology,
-                             new CpusetCoreSegregator(), false);
+                             fakeCoreSegregator, false);
 
     // Set up two processes with four threads each, one requesting at a higher
     // nice-to-have priority than the other
@@ -638,7 +608,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
     server.distributeCores();
     ASSERT_EQ(highPriorityProcess->stats->numOwnedCores, 3u);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 
@@ -648,11 +617,11 @@ TEST_F(CoreArbiterServerTest, distributeCores_niceToHaveMultiplePriorities) {
 }
 
 TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    CoreArbiterServer server(socketPath, memPath, {1}, topology,
+                             fakeCoreSegregator, false);
     server.preemptionTimeout = 1;  // For faster testing
 
     ProcessStats processStats;
@@ -682,17 +651,16 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
     ASSERT_EQ(core->managedThread, (ThreadInfo*)NULL);
     ASSERT_EQ(process->stats->numOwnedCores, 0u);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_invalidateOldTimeout) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
 
-    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, topology,
+                             fakeCoreSegregator, false);
 
     ProcessStats processStats;
     CoreInfo* core = server.coreIdToCore[1];
@@ -708,19 +676,18 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_invalidateOldTimeout) {
 
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
 }
 
 TEST_F(CoreArbiterServerTest, cleanupConnection) {
-    CoreArbiterServer::testingSkipCpusetAllocation = true;
     CoreArbiterServer::testingSkipCoreDistribution = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
     // Prevent close calls since we're not using real sockets
     sys->closeErrno = 1;
 
-    CoreArbiterServer server(socketPath, memPath, {1}, false);
+    CoreArbiterServer server(socketPath, memPath, {1}, topology,
+                             fakeCoreSegregator, false);
 
     // Set up a process with three threads: one managed, one preempted, and
     // one blocked
@@ -761,15 +728,16 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
               server.threadSocketToInfo.end());
     ASSERT_EQ(server.processIdToInfo.size(), 0u);
 
-    CoreArbiterServer::testingSkipCpusetAllocation = false;
     CoreArbiterServer::testingSkipCoreDistribution = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
     sys->closeErrno = 0;
 }
 
 TEST_F(CoreArbiterServerTest, advisoryLock_multiServer) {
-    CoreArbiterServer server(socketPath, memPath, {1, 2}, false);
-    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {1, 2}, false),
+    CoreArbiterServer server(socketPath, memPath, {1, 2}, topology,
+                             fakeCoreSegregator, false);
+    ASSERT_DEATH(CoreArbiterServer(socketPath, memPath, {1, 2}, topology,
+                                   fakeCoreSegregator, false),
                  "Error acquiring advisory lock:.*");
 }
 }  // namespace CoreArbiter

@@ -61,11 +61,11 @@ Topology::Topology(std::vector<NUMANode> nodes,
 /**
  * Compute the total number of schedulable units based on this topology.
  */
-int
+uint32_t
 Topology::getNumCores() {
-    int numCores = 0;
+    uint32_t numCores = 0;
     for (NUMANode node : nodes) {
-        numCores += node.cores.size();
+        numCores += static_cast<uint32_t>(node.cores.size());
     }
     return numCores;
 }

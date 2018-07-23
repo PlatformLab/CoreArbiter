@@ -24,6 +24,11 @@
 #include <unordered_map>
 
 namespace CoreArbiter {
+
+/**
+ * Objects of this class use Linux cpusets to segregate cores into different
+ * states. See CoreSegregator documentation for details.
+ */
 class CpusetCoreSegregator : public CoreSegregator {
   public:
     CpusetCoreSegregator();

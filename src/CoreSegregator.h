@@ -67,6 +67,9 @@ class CoreSegregator {
      */
     virtual void garbageCollect() = 0;
 
+    // Virtual destructor to ensure proper destruction
+    virtual ~CoreSegregator() {}
+
     enum CORE_STATUS {
         // A core with this status is logically unmanaged (no managed thread is
         // running on it) as well as physically unmanaged (unmanaged threads

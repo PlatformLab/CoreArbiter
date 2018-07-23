@@ -80,8 +80,9 @@ test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest  $
 	# The following test is built but must be run manually for now.
 	# $(OBJECT_DIR)/CoreArbiterRequestTest
 
-$(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
-	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
+$(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/FakeCoreSegregator.o \
+									 $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
+	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $(filter %.o,$^) $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
 $(OBJECT_DIR)/CoreArbiterClientTest: $(OBJECT_DIR)/CoreArbiterClientTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS) -o $@

@@ -389,7 +389,6 @@ class CoreArbiterServer {
     static Syscall* sys;
 
     // Used for testing to avoid unnecessary setup and code execution.
-    static bool testingSkipCpusetAllocation;
     static bool testingSkipCoreDistribution;
     static bool testingSkipSocketCommunication;
     static bool testingSkipMemoryDeallocation;
