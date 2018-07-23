@@ -40,7 +40,6 @@ namespace CoreArbiter {
 static Syscall defaultSyscall;
 Syscall* CoreArbiterServer::sys = &defaultSyscall;
 CoreArbiterServer* volatile CoreArbiterServer::mostRecentInstance = NULL;
-bool CoreArbiterServer::testingSkipCpusetAllocation = false;
 bool CoreArbiterServer::testingSkipCoreDistribution = false;
 bool CoreArbiterServer::testingSkipSocketCommunication = false;
 bool CoreArbiterServer::testingSkipMemoryDeallocation = false;
@@ -1911,13 +1910,11 @@ CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
 bool
 CoreArbiterServer::moveThreadToManagedCore(struct ThreadInfo* thread,
                                            struct CoreInfo* core) {
-    if (!testingSkipCpusetAllocation) {
-        timeTrace("SERVER: Moving thread to managed cpuset");
-        if (!coreSegregator->setThreadForCore(core->id, thread->id)) {
-            return false;
-        }
-        timeTrace("SERVER: Finished moving thread to managed cpuset");
+    timeTrace("SERVER: Moving thread to managed cpuset");
+    if (!coreSegregator->setThreadForCore(core->id, thread->id)) {
+        return false;
     }
+    timeTrace("SERVER: Finished moving thread to managed cpuset");
 
     changeThreadState(thread, RUNNING_MANAGED);
     thread->core = core;
@@ -1964,7 +1961,7 @@ CoreArbiterServer::removeThreadFromManagedCore(struct ThreadInfo* thread,
         return;
     }
 
-    if (changeCpuset && !testingSkipCpusetAllocation) {
+    if (changeCpuset) {
         // Writing a thread to a new cpuset automatically removes it from the
         // one it belonged to before
         timeTrace("SERVER: Removing thread from managed cpuset");

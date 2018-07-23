@@ -43,7 +43,7 @@ struct Topology {
     Topology();
     Topology(std::vector<NUMANode> nodes,
              std::unordered_map<int, int> coreToHypertwin);
-    int getNumCores();
+    uint32_t getNumCores();
 
     /**
      * Path for getting names of NUMA nodes.

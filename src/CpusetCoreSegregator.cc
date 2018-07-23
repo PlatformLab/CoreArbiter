@@ -1,3 +1,17 @@
+/* Copyright (c) 2015-2018 Stanford University
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 #include "CpusetCoreSegregator.h"
 
 #include <dirent.h>
@@ -31,6 +45,7 @@ CpusetCoreSegregator::CpusetCoreSegregator() {
     std::vector<int> managedCoreIds;
     for (int id = 0; id < static_cast<int>(numCores); id++) {
         managedCoreIds.push_back(id);
+        coreToThread[id] = UNMANAGED;
     }
 
     // Create a new cpuset directory for core arbitration. Since this is
@@ -96,7 +111,13 @@ CpusetCoreSegregator::~CpusetCoreSegregator() {
 
 bool
 CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
+    int originalCoreState = coreToThread[coreId];
     coreToThread[coreId] = threadId;
+    if (originalCoreState == UNMANAGED && threadId > 0) {
+        // Scale back the unmanaged cores in this case.
+        setUnmanagedCores();
+    }
+
     // If there is a special state, it will get picked up by garbage
     // collection.
     if (threadId > 0) {
@@ -385,6 +406,7 @@ CpusetCoreSegregator::removeThreadFromCore(int coreId) {
         usleep(750);
         return false;
     }
+    coreToThread[coreId] = UNASSIGNED;
     return true;
 }
 
