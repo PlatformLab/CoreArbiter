@@ -303,7 +303,7 @@ TEST_F(CoreArbiterServerTest, coresRequested_flags) {
     server.coresRequested(serverSocket);
 
     ASSERT_FALSE(process->singleNUMAOnly);
-    ASSERT_FALSE(process->willShareLastCore);
+    ASSERT_FALSE(process->willShareCores);
 
     send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
     flags = 1;
@@ -311,7 +311,7 @@ TEST_F(CoreArbiterServerTest, coresRequested_flags) {
     server.coresRequested(serverSocket);
 
     ASSERT_TRUE(process->singleNUMAOnly);
-    ASSERT_FALSE(process->willShareLastCore);
+    ASSERT_FALSE(process->willShareCores);
 
     send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
     flags = 2;
@@ -319,7 +319,7 @@ TEST_F(CoreArbiterServerTest, coresRequested_flags) {
     server.coresRequested(serverSocket);
 
     ASSERT_FALSE(process->singleNUMAOnly);
-    ASSERT_TRUE(process->willShareLastCore);
+    ASSERT_TRUE(process->willShareCores);
 
     send(clientSocket, &coreRequest[0], sizeof(uint32_t) * 8, 0);
     flags = 3;
@@ -327,7 +327,7 @@ TEST_F(CoreArbiterServerTest, coresRequested_flags) {
     server.coresRequested(serverSocket);
 
     ASSERT_TRUE(process->singleNUMAOnly);
-    ASSERT_TRUE(process->willShareLastCore);
+    ASSERT_TRUE(process->willShareCores);
 }
 
 TEST_F(CoreArbiterServerTest, coresRequested) {

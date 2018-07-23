@@ -711,13 +711,13 @@ CoreArbiterServer::coresRequested(int socket) {
     }
 
     // Check if flags changed
-    bool willShareLastCore = flags >> 1;
+    bool willShareCores = flags >> 1;
     bool singleNUMAOnly = flags & 1;
-    if (willShareLastCore != process->willShareLastCore ||
+    if (willShareCores != process->willShareCores ||
         singleNUMAOnly != process->singleNUMAOnly) {
         desiredCoresChanged = true;
     }
-    process->willShareLastCore = willShareLastCore;
+    process->willShareCores = willShareCores;
     process->singleNUMAOnly = singleNUMAOnly;
 
     if (desiredCoresChanged) {
@@ -924,6 +924,8 @@ CoreArbiterServer::findGoodCoreForProcess(
         // hypertwin; we just need to find its ID.
         // TODO: Handle the case where the lone core has a non-scheduleable
         // hypertwin. Currently we return NULL in this case.
+        // TODO: Handle this correctly in the caller by trying to exchange for
+        // a core with a scheduleable hypertwin.
         for (CoreInfo* core : process->logicallyOwnedCores) {
             hyperId = topology.coreToHypertwin[core->id];
             if (coreIdToCore.find(hyperId) == coreIdToCore.end()) {
@@ -1223,16 +1225,15 @@ CoreArbiterServer::distributeCores() {
             // its last hypertwin and has requested an odd number of cores.
             if (processToCoreCount[process] ==
                     process->desiredCorePriorities[priority] &&
-                !process->willShareLastCore &&
-                (processToCoreCount[process] & 1))
+                !process->willShareCores && (processToCoreCount[process] & 1))
                 clientQueue.push_back(std::make_pair(process, false));
         }
     }
     LOG(ERROR, "ClientQueue.size %zu", clientQueue.size());
     for (size_t i = 0; i < clientQueue.size(); i++) {
-        LOG(ERROR, "Process %d, satisfied %d, willShareLastCore = %d",
+        LOG(ERROR, "Process %d, satisfied %d, willShareCores = %d",
             clientQueue[i].first->id, clientQueue[i].second,
-            clientQueue[i].first->willShareLastCore);
+            clientQueue[i].first->willShareCores);
     }
 
     LOG(ERROR, "maxManagedCores = %zu", maxManagedCores);
@@ -1269,7 +1270,7 @@ CoreArbiterServer::distributeCores() {
     // the number of cores it takes. This institutes a policy of
     // penalizing applications that do not want to share.
     while (lastProcessGrantedIndex < static_cast<int>(clientQueue.size()) &&
-           !potentiallyUnsatisfied->willShareLastCore &&
+           !potentiallyUnsatisfied->willShareCores &&
            (processToCoreCount[potentiallyUnsatisfied] & 1)) {
         clientQueue[lastProcessGrantedIndex].second = false;
         // Take away a core from the client whose HT constraints are
@@ -1897,15 +1898,6 @@ CoreArbiterServer::sendData(int socket, void* buf, size_t numBytes,
 }
 
 /**
- * Examines all the threads on a given core, and removes threads which are not
- * the managed thread from that core.
- */
-void
-CoreArbiterServer::removeUnmanagedThreadsFromCore(CoreInfo* core) {
-    // TODO: Move this call.
-}
-
-/**
  * Moves the given thread to the given managed core and updates all associated
  * thread/core state. The core must already be part of a managed cpuset.
  *
@@ -1925,22 +1917,6 @@ CoreArbiterServer::moveThreadToManagedCore(struct ThreadInfo* thread,
         if (!coreSegregator->setThreadForCore(core->id, thread->id)) {
             return false;
         }
-        //
-        //        core->cpusetFile << thread->id;
-        //        core->cpusetFile.flush();
-        //        if (core->cpusetFile.bad()) {
-        //            // This error is likely because the thread has exited. We
-        //            need to
-        //            // close and reopen the file to prevent future errors.
-        //            LOG(ERROR, "Unable to write %d to cpuset file for core
-        //            %d",
-        //                thread->id, core->id);
-        //            core->cpusetFile.close();
-        //            core->cpusetFile.clear();
-        //            core->cpusetFile.open(core->cpusetFilename);
-        //            return false;
-        //        }
-
         timeTrace("SERVER: Finished moving thread to managed cpuset");
     }
 
