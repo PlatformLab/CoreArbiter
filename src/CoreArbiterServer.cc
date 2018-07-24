@@ -922,15 +922,35 @@ CoreArbiterServer::findGoodCoreForProcess(
         int hyperId = -1;
         // There should be exactly one core in logicallyOwnedCores with no
         // hypertwin; we just need to find its ID.
-        // TODO: Handle the case where the lone core has a non-scheduleable
-        // hypertwin. Currently we return NULL in this case.
-        // TODO: Handle this correctly in the caller by trying to exchange for
-        // a core with a scheduleable hypertwin.
         for (CoreInfo* core : process->logicallyOwnedCores) {
             hyperId = topology.coreToHypertwin[core->id];
+            // This is a core with a non-schedulable hypertwin. Seek out a
+            // candidate core with a scheduable hypertwin, and perform an
+            // exchange if such a core is available.
             if (coreIdToCore.find(hyperId) == coreIdToCore.end()) {
-                return NULL;
+                CoreInfo* replacementCore =
+                    findCoreWithSchedulableHyper(candidates);
+                if (replacementCore != NULL) {
+                    // Replace our core (in logicallyOwnedCores) with the
+                    // replacement core.
+                    core->owner = NULL;
+                    process->logicallyOwnedCores.erase(core);
+                    candidates.push_back(core);
+                    candidates.erase(std::find(
+                        candidates.begin(), candidates.end(), replacementCore));
+
+                    process->logicallyOwnedCores.insert(replacementCore);
+                    replacementCore->owner = process;
+
+                    hyperId = topology.coreToHypertwin[replacementCore->id];
+                } else {
+                    // Pick an arbitrary core by setting hyperId
+                    hyperId = candidates.front()->id;
+                }
+                break;
             }
+            // The current process already owns the hypertwin, so it is not a
+            // loner.
             if (process->logicallyOwnedCores.find(coreIdToCore[hyperId]) !=
                 process->logicallyOwnedCores.end()) {
                 hyperId = -1;
