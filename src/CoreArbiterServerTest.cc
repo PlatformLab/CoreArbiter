@@ -405,9 +405,11 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     // number of non-overlapping cores was granted to each process in each
     // case below by examining the logicallyOwnedCores in each process.
     // 1) Request a total number of cores fewer than the number of available
-    // cores. 2) Request a total number of cores larger than the number of
-    // available cores, at equal priority. 3) Request a total number of cores
-    // larger than the number of available cores, at different priorities.
+    //    cores.
+    // 2) Request a total number of cores larger than the number of available
+    //    cores, at equal priority.
+    // 3) Request a total number of cores larger than the number of available
+    //    cores, at different priorities.
 
     // Form a topology and set the topology
     CoreArbiterServer::testingSkipSocketCommunication = true;
@@ -460,11 +462,23 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     EXPECT_EQ(2U, processes[0]->logicallyOwnedCores.size());
     EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
 
+    // Requesting more than the cores we have at different priorities
+    processes[0]->desiredCorePriorities[1] = 4;
+    processes[1]->desiredCorePriorities[1] = 0;
+    processes[1]->desiredCorePriorities[2] = 2;
+    server.corePriorityQueues[1].pop_back();
+    server.corePriorityQueues[2].push_back(processes[1]);
+
+    server.distributeCores();
+    EXPECT_EQ(3U, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(0U, processes[1]->logicallyOwnedCores.size());
+
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
     // TODO: Add debug logging (RC Style) to examine the internals of the
     // client queues.
 }
+
 TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
     // Test Plan: Create three core arbiter clients, and a topology with two
     // NUMANode. Verify that the appropriate core allocation was granted to
