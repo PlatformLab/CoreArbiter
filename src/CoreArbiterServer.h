@@ -303,6 +303,23 @@ class CoreArbiterServer {
     std::deque<ProcessInfo*> getProcessesOrderedByCoreCount(
         const std::unordered_map<struct ProcessInfo*, uint32_t>
             processToCoreCount);
+
+    /**
+     * Find a core with a schedulable hypertwin, regardless of container type.
+     * Return NULL if no such core exists among the candidate set.
+     */
+    template <template <typename...> class T>
+    CoreInfo* findCoreWithSchedulableHyper(
+        const T<struct CoreInfo*>& candidates) {
+        for (CoreInfo* core : candidates) {
+            int hyperId = topology.coreToHypertwin[core->id];
+            if (coreIdToCore.find(hyperId) != coreIdToCore.end()) {
+                return core;
+            }
+        }
+        return NULL;
+    }
+
     void makeCoreAssignmentsConsistent();
 
     void installSignalHandler();
