@@ -914,7 +914,8 @@ CoreArbiterServer::findGoodCoreForProcess(
     }
 
     // First look for a core which is the hypertwin of one of this process's
-    // existing cores, if that core is available for scheduling.
+    // existing cores, if that core is available for scheduling at all.
+    // TODO: Can this be simplified?
     int numOwnedCores = static_cast<int>(process->logicallyOwnedCores.size());
     // Invariant: A process with a even number of cores has both hypertwins, so
     // looking for hypertwins only applies to odd numbers.
@@ -944,13 +945,12 @@ CoreArbiterServer::findGoodCoreForProcess(
 
                     hyperId = topology.coreToHypertwin[replacementCore->id];
                 } else {
-                    // Pick an arbitrary core by setting hyperId
-                    hyperId = candidates.front()->id;
+                    hyperId = -1;
                 }
                 break;
             }
-            // The current process already owns the hypertwin, so it is not a
-            // loner.
+            // The current process already owns the hypertwin, so it is not the
+            // core we seek.
             if (process->logicallyOwnedCores.find(coreIdToCore[hyperId]) !=
                 process->logicallyOwnedCores.end()) {
                 hyperId = -1;
@@ -959,37 +959,27 @@ CoreArbiterServer::findGoodCoreForProcess(
             }
         }
 
-        // If we have reached this point, then we presume that the hypertwin is
-        // available for scheduling.
-        CoreInfo* desiredCore = coreIdToCore[hyperId];
-        // This desired core is in one of two states.
-        // 1) It is owned by another process.
-        // 2) It is part of the candidates list.
-        auto it = std::find(candidates.begin(), candidates.end(), desiredCore);
-        if (it != candidates.end()) {
-            candidates.erase(it);
-        } else {
-            ProcessInfo* formerOwner = desiredCore->owner;
-            if (formerOwner != process) {
+        if (hyperId != -1) {
+            // If we have reached this point, then we presume that the hypertwin
+            // is available for scheduling.
+            CoreInfo* desiredCore = coreIdToCore[hyperId];
+            // This desired core is in one of two states.
+            // 1) It is owned by another process.
+            // 2) It is part of the candidates list.
+            auto it =
+                std::find(candidates.begin(), candidates.end(), desiredCore);
+            if (it != candidates.end()) {
+                candidates.erase(it);
+            } else {
                 ProcessInfo* formerOwner = desiredCore->owner;
-                formerOwner->logicallyOwnedCores.erase(desiredCore);
-                formerOwner->logicallyOwnedCores.insert(
-                    findGoodCoreForProcess(formerOwner, candidates));
+                if (formerOwner != process) {
+                    ProcessInfo* formerOwner = desiredCore->owner;
+                    formerOwner->logicallyOwnedCores.erase(desiredCore);
+                    formerOwner->logicallyOwnedCores.insert(
+                        findGoodCoreForProcess(formerOwner, candidates));
+                }
             }
-        }
-        return desiredCore;
-    }
-
-    for (struct CoreInfo* candidate : candidates) {
-        LOG(DEBUG, "Considering candidate %d, hypertwin of %d", candidate->id,
-            topology.coreToHypertwin[candidate->id]);
-        if (coresOwnedByProcess.find(topology.coreToHypertwin[candidate->id]) !=
-            coresOwnedByProcess.end()) {
-            LOG(NOTICE, "candidate %d, hypertwin of %d has been selected",
-                candidate->id, topology.coreToHypertwin[candidate->id]);
-            candidates.erase(
-                std::find(candidates.begin(), candidates.end(), candidate));
-            return candidate;
+            return desiredCore;
         }
     }
 
@@ -1005,19 +995,23 @@ CoreArbiterServer::findGoodCoreForProcess(
         }
     }
 
-    // Next look for a core whose hypertwin is in the set of possibly available
-    // cores.
-    for (struct CoreInfo* candidate : candidates) {
-        int hyperId = topology.coreToHypertwin[candidate->id];
-        if (coreIdToCore.find(hyperId) != coreIdToCore.end()) {
-            candidates.erase(
-                std::find(candidates.begin(), candidates.end(), candidate));
-            return candidate;
-        }
+    // Pick a core while respecting constraints
+    CoreInfo* core = findCoreWithSchedulableHyper(candidates);
+    if (core != NULL) {
+        candidates.erase(std::find(candidates.begin(), candidates.end(), core));
+        return core;
     }
 
-    // Finally, find any available core
-    CoreInfo* core = candidates.front();
+    // This means there are no full cores remaining.
+    // TODO: Make sure there's really no recourse here, such as booting other
+    // processes off of scheduleable cores without violating their constraints
+    // in a potentially circular way.
+    if (!process->willShareCores) {
+        return NULL;
+    }
+
+    // If a core is willing to share, find any available core.
+    core = candidates.front();
     candidates.pop_front();
     return core;
 }
@@ -1169,7 +1163,7 @@ CoreArbiterServer::getProcessesOrderedByCoreCount(
     std::deque<CoreArbiterServer::ProcessInfo*> sortedProcesses;
     for (auto it = processToCoreCount.begin(); it != processToCoreCount.end();
          it++) {
-        if (it->second > 0) {
+        if (it->second >= 0) {
             sortedProcesses.push_back(it->first);
             LOG(ERROR, "Process %d joined sorted processes", it->first->id);
         }
@@ -1247,6 +1241,7 @@ CoreArbiterServer::distributeCores() {
                 clientQueue.push_back(std::make_pair(process, false));
         }
     }
+
     LOG(ERROR, "ClientQueue.size %zu", clientQueue.size());
     for (size_t i = 0; i < clientQueue.size(); i++) {
         LOG(ERROR, "Process %d, satisfied %d, willShareCores = %d",
@@ -1258,6 +1253,14 @@ CoreArbiterServer::distributeCores() {
     // Compute the number of cores that each process can have, then check
     // whether hypertwin constraints are satisfied.
     std::unordered_map<struct ProcessInfo*, uint32_t> processToCoreCount;
+
+    // Ensure that every process appears in processToCoreCount, so that
+    // processes that will not get any cores will eventually appear in
+    // sortedProcesses and have their logicallyOwnedCores flushed.
+    for (size_t i = 0; i < clientQueue.size(); i++) {
+        processToCoreCount[clientQueue[i].first] = 0;
+    }
+
     int lastProcessGrantedIndex = -1;
     for (int i = 0;
          i < static_cast<int>(std::min(maxManagedCores, clientQueue.size()));
@@ -1365,9 +1368,6 @@ CoreArbiterServer::distributeCores() {
         int numCores = std::min(processToCoreCount[process],
                                 process->getTotalDesiredCores());
 
-        //        process->takeCores(candidatesCores, numCores, numaNode); //
-        //        Decide whether to abstract this out.
-
         // Clean up any previously assigned cores to avoid bias towards
         // incumbents. Invariant: All other processes have either already
         // claimed all of their cores or none of their cores at this point.
@@ -1387,25 +1387,27 @@ CoreArbiterServer::distributeCores() {
             // it back unless the other process also owns the hypertwin of
             // this core already.
             if (desiredCore->owner != process && desiredCore->owner != NULL) {
+                int hypertwin = topology.coreToHypertwin[desiredCore->id];
+                // If we are unwilling to share and the hypertwin is
+                // unschedulable, then we should give up on this core.
+                if (coreIdToCore.find(hypertwin) == coreIdToCore.end() &&
+                    !process->willShareCores) {
+                    // This should never happen because we should never have
+                    // taken this core in the first place, so log an error.
+                    LOG(ERROR,
+                        "Process %d is unwilling to share cores; should never "
+                        "have been granted core %d with unscheable hypertwin "
+                        "%d",
+                        process->id, desiredCore->id, hypertwin);
+                    continue;
+                }
+
                 // If the other process also owns the hypertwin of this core,
                 // we give up on taking this core.
-                // TODO: Consider what happens if the hypertwin is not
-                // available to be managed by the arbiter (therefore not in
-                // CoreIdToCore). Should we still try to claim the core if the
-                // HT is not available at all?
-                // I think it depends on whether this is the last core that the
-                // process is claiming.
-                // Also, what if we (core arbiter) owns two cores on a socket
-                // but they're not hypertwins of each other? In that case,
-                // assigning the process to the socket would fail but we
-                // wouldn't know it.
-                // TODO: Ask John what he thinks about this case.
-                // Here the assumption is that we owned this core previously,
-                // so the bigger problem is going to be later on.
-                int hypertwin = topology.coreToHypertwin[desiredCore->id];
                 if (coreIdToCore.find(hypertwin) != coreIdToCore.end() &&
                     coreIdToCore[hypertwin]->owner == desiredCore->owner)
                     continue;
+
                 ProcessInfo* formerOwner = desiredCore->owner;
                 formerOwner->logicallyOwnedCores.erase(desiredCore);
                 formerOwner->logicallyOwnedCores.insert(
@@ -1422,13 +1424,8 @@ CoreArbiterServer::distributeCores() {
         // Pick up additional cores if we haven't yet reached the number that
         // were earmarked for us.
         while (coresClaimed < numCores) {
-            // TODO: The new cores that we pick for a given process may
-            // currently be owned by a different process (it should be an
-            // invariant that they are the last core of a different process),
-            // and we have to account for hypertwin constraints.
             CoreInfo* chosenCore =
                 findGoodCoreForProcess(process, candidateCores);
-
             LOG(ERROR, "Process %d gains core %d", process->id, chosenCore->id);
             process->logicallyOwnedCores.insert(chosenCore);
             chosenCore->owner = process;
@@ -1436,20 +1433,7 @@ CoreArbiterServer::distributeCores() {
         }
     }
 
-    // TODO: Test the logical assignment algorithm above and tweak it towards
-    // correctness.
-    // TODO: Move towards making the physical assignments consistent with the
-    // logical assignments.
     makeCoreAssignmentsConsistent();
-
-    // TODO: Think about how to test this algorithm independently of the
-    // physical assignments.
-    // TODO: May need to mock out the presence of multiple sockets on machines
-    // that do not have it for ease of testing.
-    // That is, mock out the API calls that tell you about cpusets.
-    // Assign one, and keep assigning all until there's not enough room.
-    // TODO: Make sure we don't assign more cores to a process than it
-    // requested in the last step.
 
     ////////////////////////////////////////////////////////////////////////////////
 
