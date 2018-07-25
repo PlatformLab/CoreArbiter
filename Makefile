@@ -22,8 +22,10 @@ ifndef CHECK_TARGET
 CHECK_TARGET=$$(find $(SRC_DIR) '(' -name '*.h' -or -name '*.cc' ')' -not -path '$(TOP)/googletest/*' )
 endif
 
+TEST_OBJECT_NAMES := FakeCoreSegregator.o TestLog.o
 OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o \
-	CodeLocation.o ArbiterClientShim.o Topology.o CpusetCoreSegregator.o
+	CodeLocation.o ArbiterClientShim.o Topology.o CpusetCoreSegregator.o \
+	$(TEST_OBJECT_NAMES)
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')
@@ -72,7 +74,7 @@ check:
 
 TEST_OBJECT_DIR = test_obj
 GTEST_DIR=../googletest/googletest
-TEST_LIBS=-L$(TEST_OBJECT_DIR) -lCoreArbiter $(TEST_OBJECT_DIR)/libgtest.a
+TEST_LIBS=-L$(TEST_OBJECT_DIR) -lCoreArbiter $(TEST_OBJECT_DIR)/libgtest.a $(TEST_OBJECT_DIR)/TestLog.o
 INCLUDE+=-I${GTEST_DIR}/include
 
 test: $(TEST_OBJECT_DIR)/CoreArbiterServerTest $(TEST_OBJECT_DIR)/CoreArbiterClientTest  \
