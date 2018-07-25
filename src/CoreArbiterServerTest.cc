@@ -557,9 +557,11 @@ TEST_F(CoreArbiterServerTest, distributeCores_coreSharingSufficientCores) {
     int shareId1 = (*processes[1]->logicallyOwnedCores.begin())->id;
     int shareId2 = (*processes[2]->logicallyOwnedCores.begin())->id;
     if (noShareId == 2 || noShareId == 3) {
-        EXPECT_TRUE((shareId1 == 0 && shareId2 == 1) || (shareId1 == 1 && shareId2 == 0));
+        EXPECT_TRUE((shareId1 == 0 && shareId2 == 1) ||
+                    (shareId1 == 1 && shareId2 == 0));
     } else {
-        EXPECT_TRUE((shareId1 == 2 && shareId2 == 3) || (shareId1 == 3 && shareId2 == 2));
+        EXPECT_TRUE((shareId1 == 2 && shareId2 == 3) ||
+                    (shareId1 == 3 && shareId2 == 2));
     }
 
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
@@ -570,6 +572,61 @@ TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
     // NUMANode. Verify that the appropriate core allocation was granted to
     // each process in each case below by examining the logicallyOwnedCores in
     // each process.
+    Topology::NUMANode nn0{0, {0, 1, 2, 3}};
+    Topology::NUMANode nn1{1, {4, 5, 6, 7}};
+    std::unordered_map<int, int> coreToHypertwin{
+        {0, 1}, {2, 3}, {4, 5}, {6, 7}};
+
+    // Make the map symmetric by adding in the reverse entries.
+    topology = Topology({nn0, nn1}, coreToHypertwin);
+    fakeCoreSegregator = new FakeCoreSegregator(topology);
+
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3, 4, 5, 6, 7},
+                             topology, fakeCoreSegregator, false);
+
+    std::vector<ProcessInfo*> processes;
+    for (int i = 0; i < 3; i++) {
+        ProcessInfo* process = createProcess(server, i, new ProcessStats());
+        processes.push_back(process);
+        // Create enough threads to support different cases relative to the
+        // total number of cores available.
+        for (int j = 0; j < 4; j++) {
+            createThread(server, j, process, j, CoreArbiterServer::BLOCKED);
+        }
+    }
+
+    server.corePriorityQueues[1].push_back(processes[0]);
+    server.corePriorityQueues[1].push_back(processes[1]);
+    server.corePriorityQueues[1].push_back(processes[2]);
+
+    processes[0]->desiredCorePriorities[1] = 3;
+    processes[0]->willShareCores = false;
+    processes[1]->desiredCorePriorities[1] = 2;
+    processes[2]->desiredCorePriorities[1] = 1;
+
+    server.distributeCores();
+
+    EXPECT_EQ(3U, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(2U, processes[1]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[2]->logicallyOwnedCores.size());
+
+    // Verify that the cores for process 0 are on the second NUMAnode
+    int notFoundCount = 0;
+    auto& cores = processes[0]->logicallyOwnedCores;
+    for (int i = 4; i < 8; i++) {
+        if (cores.find(server.coreIdToCore[i]) == cores.end()) {
+            notFoundCount++;
+        }
+    }
+    EXPECT_EQ(1, notFoundCount);
+
+    // Verify that the cores for process 1 and 2 are on the correct cores.
+    cores = processes[1]->logicallyOwnedCores;
+    EXPECT_NE(cores.end(), cores.find(server.coreIdToCore[2]));
+    EXPECT_NE(cores.end(), cores.find(server.coreIdToCore[3]));
+
+    cores = processes[2]->logicallyOwnedCores;
+    EXPECT_NE(cores.end(), cores.find(server.coreIdToCore[1]));
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
