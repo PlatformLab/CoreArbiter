@@ -22,10 +22,8 @@ ifndef CHECK_TARGET
 CHECK_TARGET=$$(find $(SRC_DIR) '(' -name '*.h' -or -name '*.cc' ')' -not -path '$(TOP)/googletest/*' )
 endif
 
-TEST_OBJECT_NAMES := FakeCoreSegregator.o TestLog.o
 OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o \
-	CodeLocation.o ArbiterClientShim.o Topology.o CpusetCoreSegregator.o \
-	$(TEST_OBJECT_NAMES)
+	CodeLocation.o ArbiterClientShim.o Topology.o CpusetCoreSegregator.o
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')
@@ -73,7 +71,7 @@ check:
 # Test Targets
 
 GTEST_DIR=../googletest/googletest
-TEST_LIBS=-Lobj/ -lCoreArbiter $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/TestLog.o
+TEST_LIBS=-Lobj/ -lCoreArbiter $(OBJECT_DIR)/libgtest.a
 INCLUDE+=-I${GTEST_DIR}/include
 
 test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest  $(OBJECT_DIR)/CoreArbiterRequestTest $(OBJECT_DIR)/CoreArbiterRampDownTest
@@ -82,7 +80,7 @@ test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest  $
 	# The following test is built but must be run manually for now.
 	# $(OBJECT_DIR)/CoreArbiterRequestTest
 
-$(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o \
+$(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/FakeCoreSegregator.o \
 									 $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $(filter %.o,$^) $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
