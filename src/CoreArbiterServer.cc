@@ -28,7 +28,6 @@
 #include "PerfUtils/TimeTrace.h"
 #include "PerfUtils/Util.h"
 #include "Topology.h"
-#include "TestLog.h"
 
 using PerfUtils::TimeTrace;
 using PerfUtils::Util::containerToUnorderedSet;
@@ -1164,8 +1163,10 @@ CoreArbiterServer::getProcessesOrderedByCoreCount(
     std::deque<CoreArbiterServer::ProcessInfo*> sortedProcesses;
     for (auto it = processToCoreCount.begin(); it != processToCoreCount.end();
          it++) {
-        sortedProcesses.push_back(it->first);
-        LOG(ERROR, "Process %d joined sorted processes", it->first->id);
+        if (it->second >= 0) {
+            sortedProcesses.push_back(it->first);
+            LOG(ERROR, "Process %d joined sorted processes", it->first->id);
+        }
     }
     // Sort processes by descending number of cores assigned.
     std::sort(sortedProcesses.begin(), sortedProcesses.end(),
@@ -1241,14 +1242,14 @@ CoreArbiterServer::distributeCores() {
         }
     }
 
-    TEST_LOG("ClientQueue.size %zu", clientQueue.size());
+    LOG(ERROR, "ClientQueue.size %zu", clientQueue.size());
     for (size_t i = 0; i < clientQueue.size(); i++) {
-        TEST_LOG("Process %d, satisfied %d, willShareCores = %d",
+        LOG(ERROR, "Process %d, satisfied %d, willShareCores = %d",
             clientQueue[i].first->id, clientQueue[i].second,
             clientQueue[i].first->willShareCores);
     }
 
-    TEST_LOG("maxManagedCores = %zu", maxManagedCores);
+    LOG(ERROR, "maxManagedCores = %zu", maxManagedCores);
     // Compute the number of cores that each process can have, then check
     // whether hypertwin constraints are satisfied.
     std::unordered_map<struct ProcessInfo*, uint32_t> processToCoreCount;
@@ -1265,7 +1266,7 @@ CoreArbiterServer::distributeCores() {
          i < static_cast<int>(std::min(maxManagedCores, clientQueue.size()));
          i++) {
         processToCoreCount[clientQueue[i].first]++;
-        TEST_LOG("Process %d granted %d cores", clientQueue[i].first->id,
+        LOG(ERROR, "Process %d granted %d cores", clientQueue[i].first->id,
             processToCoreCount[clientQueue[i].first]);
         clientQueue[i].second = true;
         lastProcessGrantedIndex = i;
@@ -1336,7 +1337,7 @@ CoreArbiterServer::distributeCores() {
         processToCoreCount[potentiallyUnsatisfied]--;
         lastProcessGrantedIndex--;
 
-        TEST_LOG("lastProcessGrantedIndex = %d", lastProcessGrantedIndex);
+        LOG(ERROR, "lastProcessGrantedIndex = %d", lastProcessGrantedIndex);
         if (lastProcessGrantedIndex < 0) {
             LOG(ERROR,
                 "No processes are able to get any cores under any socket "
@@ -1419,13 +1420,13 @@ CoreArbiterServer::distributeCores() {
                                  candidateCores.end());
             coresClaimed++;
         }
-        TEST_LOG("coresClaimed %d, numCores %d", coresClaimed, numCores);
+        LOG(ERROR, "coresClaimed %d, numCores %d", coresClaimed, numCores);
         // Pick up additional cores if we haven't yet reached the number that
         // were earmarked for us.
         while (coresClaimed < numCores) {
             CoreInfo* chosenCore =
                 findGoodCoreForProcess(process, candidateCores);
-            TEST_LOG("Process %d gains core %d", process->id, chosenCore->id);
+            LOG(ERROR, "Process %d gains core %d", process->id, chosenCore->id);
             process->logicallyOwnedCores.insert(chosenCore);
             chosenCore->owner = process;
             coresClaimed++;
