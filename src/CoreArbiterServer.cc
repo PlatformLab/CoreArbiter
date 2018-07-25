@@ -1163,10 +1163,8 @@ CoreArbiterServer::getProcessesOrderedByCoreCount(
     std::deque<CoreArbiterServer::ProcessInfo*> sortedProcesses;
     for (auto it = processToCoreCount.begin(); it != processToCoreCount.end();
          it++) {
-        if (it->second >= 0) {
-            sortedProcesses.push_back(it->first);
-            LOG(ERROR, "Process %d joined sorted processes", it->first->id);
-        }
+        sortedProcesses.push_back(it->first);
+        LOG(ERROR, "Process %d joined sorted processes", it->first->id);
     }
     // Sort processes by descending number of cores assigned.
     std::sort(sortedProcesses.begin(), sortedProcesses.end(),
@@ -1174,6 +1172,29 @@ CoreArbiterServer::getProcessesOrderedByCoreCount(
                   return processToCoreCount.at(a) > processToCoreCount.at(b);
               });
     return sortedProcesses;
+}
+
+/**
+ * Find hypertwins of cores owned by the given process, tell the CoreSegregator
+ * to idle them, and remove them from candidateCores.
+ */
+void
+CoreArbiterServer::removeAndIdleHyperOf(ProcessInfo* process,
+                                        std::deque<CoreInfo*>& candidateCores) {
+    for (auto it = candidateCores.begin(); it != candidateCores.end();) {
+        CoreInfo* core = *it;
+        if (coreIdToCore.find(topology.coreToHypertwin[core->id]) !=
+                coreIdToCore.end() &&
+            process->logicallyOwnedCores.find(
+                coreIdToCore[topology.coreToHypertwin[core->id]]) !=
+                process->logicallyOwnedCores.end()) {
+            coreSegregator->setThreadForCore(core->id,
+                                             CoreSegregator::COERCE_IDLE);
+            it = candidateCores.erase(it);
+        } else {
+            it++;
+        }
+    }
 }
 
 /**
@@ -1430,6 +1451,12 @@ CoreArbiterServer::distributeCores() {
             process->logicallyOwnedCores.insert(chosenCore);
             chosenCore->owner = process;
             coresClaimed++;
+        }
+
+        // Remove hypertwins of cores taken by this process from the set of
+        // available cores, if this process is unwilling to share.
+        if (!process->willShareCores) {
+            removeAndIdleHyperOf(process, candidateCores);
         }
     }
 
