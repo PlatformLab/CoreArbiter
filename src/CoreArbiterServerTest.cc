@@ -479,6 +479,46 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     // client queues.
 }
 
+TEST_F(CoreArbiterServerTest, distributeCores_coreSharing) {
+    // Test Plan: Create three core arbiter clients, two of which are willing
+    // to share and one of which is not.
+    // TODO: Examine a case where we should be able to fit and verify that we do
+    // fit.
+    CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, topology,
+                             fakeCoreSegregator, false);
+
+    // Set up three processes
+    std::vector<ProcessInfo*> processes;
+    for (int i = 0; i < 3; i++) {
+        ProcessInfo* process = createProcess(server, i, new ProcessStats());
+        processes.push_back(process);
+        // Create enough threads to support different cases relative to the
+        // total number of cores available.
+        for (int j = 0; j < 4; j++) {
+            createThread(server, j, process, j, CoreArbiterServer::BLOCKED);
+        }
+    }
+
+    server.corePriorityQueues[1].push_back(processes[0]);
+    server.corePriorityQueues[1].push_back(processes[1]);
+    server.corePriorityQueues[1].push_back(processes[2]);
+
+    processes[0]->desiredCorePriorities[1] = 1;
+    processes[0]->willShareCores = false;
+    processes[1]->desiredCorePriorities[1] = 1;
+    processes[2]->desiredCorePriorities[1] = 1;
+
+    server.distributeCores();
+
+    EXPECT_EQ(1U, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
+    EXPECT_EQ(0U, processes[2]->logicallyOwnedCores.size());
+
+    int noShareId = (*processes[0]->logicallyOwnedCores.begin())->id;
+    EXPECT_TRUE(noShareId == 2 || noShareId == 3);
+    EXPECT_EQ(1, (*processes[1]->logicallyOwnedCores.begin())->id);
+}
+
 TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
     // Test Plan: Create three core arbiter clients, and a topology with two
     // NUMANode. Verify that the appropriate core allocation was granted to

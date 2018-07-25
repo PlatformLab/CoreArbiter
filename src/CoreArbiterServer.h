@@ -303,6 +303,8 @@ class CoreArbiterServer {
     std::deque<ProcessInfo*> getProcessesOrderedByCoreCount(
         const std::unordered_map<struct ProcessInfo*, uint32_t>
             processToCoreCount);
+    void removeAndIdleHyperOf(ProcessInfo* process,
+                              std::deque<CoreInfo*>& candidateCores);
 
     /**
      * Find a core with a schedulable hypertwin, regardless of container type.
