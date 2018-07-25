@@ -479,7 +479,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     // client queues.
 }
 
-TEST_F(CoreArbiterServerTest, distributeCores_coreSharing) {
+TEST_F(CoreArbiterServerTest, distributeCores_coreSharingInsufficientCores) {
     // Test Plan: Create three core arbiter clients, two of which are willing
     // to share and one of which is not.
     // TODO: Examine a case where we should be able to fit and verify that we do
@@ -517,6 +517,52 @@ TEST_F(CoreArbiterServerTest, distributeCores_coreSharing) {
     int noShareId = (*processes[0]->logicallyOwnedCores.begin())->id;
     EXPECT_TRUE(noShareId == 2 || noShareId == 3);
     EXPECT_EQ(1, (*processes[1]->logicallyOwnedCores.begin())->id);
+}
+
+TEST_F(CoreArbiterServerTest, distributeCores_coreSharingSufficientCores) {
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
+    // Test Plan: Create three core arbiter clients, two of which are willing
+    // to share and one of which is not. Have enough cores for all of them.
+    CoreArbiterServer server(socketPath, memPath, {0, 1, 2, 3}, topology,
+                             fakeCoreSegregator, false);
+
+    // Set up three processes
+    std::vector<ProcessInfo*> processes;
+    for (int i = 0; i < 3; i++) {
+        ProcessInfo* process = createProcess(server, i, new ProcessStats());
+        processes.push_back(process);
+        // Create enough threads to support different cases relative to the
+        // total number of cores available.
+        for (int j = 0; j < 4; j++) {
+            createThread(server, j, process, j, CoreArbiterServer::BLOCKED);
+        }
+    }
+
+    server.corePriorityQueues[1].push_back(processes[0]);
+    server.corePriorityQueues[1].push_back(processes[1]);
+    server.corePriorityQueues[1].push_back(processes[2]);
+
+    processes[0]->desiredCorePriorities[1] = 1;
+    processes[0]->willShareCores = false;
+    processes[1]->desiredCorePriorities[1] = 1;
+    processes[2]->desiredCorePriorities[1] = 1;
+
+    server.distributeCores();
+
+    EXPECT_EQ(1U, processes[0]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
+    EXPECT_EQ(1U, processes[2]->logicallyOwnedCores.size());
+
+    int noShareId = (*processes[0]->logicallyOwnedCores.begin())->id;
+    int shareId1 = (*processes[1]->logicallyOwnedCores.begin())->id;
+    int shareId2 = (*processes[2]->logicallyOwnedCores.begin())->id;
+    if (noShareId == 2 || noShareId == 3) {
+        EXPECT_TRUE((shareId1 == 0 && shareId2 == 1) || (shareId1 == 1 && shareId2 == 0));
+    } else {
+        EXPECT_TRUE((shareId1 == 2 && shareId2 == 3) || (shareId1 == 3 && shareId2 == 2));
+    }
+
+    CoreArbiterServer::testingDoNotChangeManagedCores = true;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
