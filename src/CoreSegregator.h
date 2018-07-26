@@ -50,9 +50,15 @@ class CoreSegregator {
     /**
      * Make the thread currently officially residing on the given core
      * unmanaged, freeing the core for use by other managed threads.
+     *
      * NB: This method only removes the most recent thread passed to
      * setThreadForCore; if there were other threads resident on the given
      * core for other reasons, they should be cleaned up in garbageCollect().
+     * NB: This method has different semantics from calling
+     * setThreadForCore(coreId, UNASSIGNED); it ensures that the active thread
+     * on the core is removed upon returning, rather than deferring this
+     * operation until garbage collection. Thus, this method should only be
+     * used to remove an uncooperative thread from a core.
      *
      * \param coreId
      *    The core to remove the currently active thread from.
