@@ -36,8 +36,12 @@ tags
 # Vim swap files
 .*.swp
 
+# Error files
+*.err
+
 # Generated files
 obj/
 lib/
 include/
 bin/
+test_obj/

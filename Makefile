@@ -45,7 +45,7 @@ $(CLIENT_BIN): $(OBJECT_DIR)/CoreArbiterClientMain.o $(OBJECT_DIR)/libCoreArbite
 	$(CXX) $(LDFLAGS) $(CCFLAGS) -o $@ $^ $(LIBS)
 
 $(OBJECT_DIR)/libCoreArbiter.a: $(OBJECTS)
-	ar rcs $@ $^	
+	ar rcs $@ $^
 
 -include $(DEP)
 
@@ -65,43 +65,65 @@ check:
 ################################################################################
 # Test Targets
 
+TEST_OBJECT_DIR = test_obj
 GTEST_DIR=../googletest/googletest
-TEST_LIBS=-Lobj/ -lCoreArbiter $(OBJECT_DIR)/libgtest.a
+TEST_LIBS=-L$(TEST_OBJECT_DIR) -lCoreArbiter $(TEST_OBJECT_DIR)/libgtest.a
 INCLUDE+=-I${GTEST_DIR}/include
 
-test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest  $(OBJECT_DIR)/CoreArbiterRequestTest \
- 	  $(OBJECT_DIR)/CoreArbiterRampDownTest $(OBJECT_DIR)/CpusetCoreSegregatorTest
-	$(OBJECT_DIR)/CoreArbiterServerTest
-	$(OBJECT_DIR)/CoreArbiterClientTest
-	$(OBJECT_DIR)/CpusetCoreSegregatorTest
+test: $(TEST_OBJECT_DIR)/CoreArbiterServerTest $(TEST_OBJECT_DIR)/CoreArbiterClientTest  \
+		$(TEST_OBJECT_DIR)/CoreArbiterRequestTest $(TEST_OBJECT_DIR)/CoreArbiterRampDownTest \
+		$(TEST_OBJECT_DIR)/CpusetCoreSegregatorTest
+	$(TEST_OBJECT_DIR)/CoreArbiterServerTest
+	$(TEST_OBJECT_DIR)/CoreArbiterClientTest
+	$(TEST_OBJECT_DIR)/CpusetCoreSegregatorTest
 	# The following test is built but must be run manually for now.
-	# $(OBJECT_DIR)/CoreArbiterRequestTest
+	# $(TEST_OBJECT_DIR)/CoreArbiterRequestTest
 
-$(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/FakeCoreSegregator.o \
-									 $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
+$(TEST_OBJECT_DIR)/CoreArbiterServerTest: $(TEST_OBJECT_DIR)/CoreArbiterServerTest.o $(TEST_OBJECT_DIR)/FakeCoreSegregator.o \
+									 $(TEST_OBJECT_DIR)/libgtest.a $(TEST_OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(INCLUDE) $(CCFLAGS) $(filter %.o,$^) $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
-$(OBJECT_DIR)/CoreArbiterClientTest: $(OBJECT_DIR)/CoreArbiterClientTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
+$(TEST_OBJECT_DIR)/CoreArbiterClientTest: $(TEST_OBJECT_DIR)/CoreArbiterClientTest.o $(TEST_OBJECT_DIR)/libgtest.a $(TEST_OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS) -o $@
 
-$(OBJECT_DIR)/CpusetCoreSegregatorTest: $(OBJECT_DIR)/CpusetCoreSegregatorTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
+$(TEST_OBJECT_DIR)/CpusetCoreSegregatorTest: $(TEST_OBJECT_DIR)/CpusetCoreSegregatorTest.o $(TEST_OBJECT_DIR)/libgtest.a $(TEST_OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS) -o $@
 
-$(OBJECT_DIR)/CoreArbiterRequestTest: $(OBJECT_DIR)/CoreArbiterRequestTest.o $(OBJECT_DIR)/libCoreArbiter.a
+$(TEST_OBJECT_DIR)/CoreArbiterRequestTest: $(TEST_OBJECT_DIR)/CoreArbiterRequestTest.o $(TEST_OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(INCLUDE) $(CCFLAGS) $^  $(LIBS)  -o $@
 
-$(OBJECT_DIR)/CoreArbiterRampDownTest: $(OBJECT_DIR)/CoreArbiterRampDownTest.o $(OBJECT_DIR)/libCoreArbiter.a
+$(TEST_OBJECT_DIR)/CoreArbiterRampDownTest: $(TEST_OBJECT_DIR)/CoreArbiterRampDownTest.o $(TEST_OBJECT_DIR)/libCoreArbiter.a
 	$(CXX) $(INCLUDE) $(CCFLAGS) $^  $(LIBS)  -o $@
 
 
-$(OBJECT_DIR)/libgtest.a:
+$(TEST_OBJECT_DIR)/libgtest.a:
 	$(CXX) -I${GTEST_DIR}/include -I${GTEST_DIR} \
 		-pthread -c ${GTEST_DIR}/src/gtest-all.cc \
-		-o $(OBJECT_DIR)/gtest-all.o
-	ar -rv $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/gtest-all.o
+		-o $(TEST_OBJECT_DIR)/gtest-all.o
+	ar -rv $(TEST_OBJECT_DIR)/libgtest.a $(TEST_OBJECT_DIR)/gtest-all.o
+################################################################################
+# Test versions of all object files which form the library.
+
+TEST_OBJECTS = $(patsubst %,$(TEST_OBJECT_DIR)/%,$(OBJECT_NAMES))
+TEST_DEP=$(TEST_OBJECTS:.o=.d)
+
+$(TEST_OBJECT_DIR)/libCoreArbiter.a: $(TEST_OBJECTS)
+	ar rcs $@ $^
+
+-include $(TEST_DEP)
+
+$(TEST_OBJECT_DIR)/%.d: $(SRC_DIR)/%.cc | $(TEST_OBJECT_DIR)
+	$(CXX) $(INCLUDE) $(CCFLAGS) $< -MM -MT $(@:.d=.o) > $@
+
+$(TEST_OBJECT_DIR)/%.o: $(SRC_DIR)/%.cc $(HEADERS) | $(TEST_OBJECT_DIR)
+	$(CXX) $(INCLUDE) $(CCFLAGS) -c $< -o $@
+
+$(TEST_OBJECT_DIR):
+	mkdir -p $(TEST_OBJECT_DIR)
+
 ################################################################################
 
 clean:
-	rm -rf $(OBJECT_DIR) $(BIN_DIR) $(INCLUDE_DIR) $(LIB_DIR)
+	rm -rf $(OBJECT_DIR) $(TEST_OBJECT_DIR) $(BIN_DIR) $(INCLUDE_DIR) $(LIB_DIR)
 
 .PHONY: install clean
