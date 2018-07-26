@@ -122,9 +122,10 @@ CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
     // collection.
     if (threadId > 0) {
         std::fstream& cpusetFile = coreToCpusetFile[coreId];
-        cpusetFile << threadId;
+        cpusetFile.seekg(0);
+        cpusetFile << threadId << std::endl;
         cpusetFile.flush();
-        if (cpusetFile.bad()) {
+        if (cpusetFile.fail()) {
             // This error is likely because the thread has exited. We need to
             // close and reopen the file to prevent future errors.
             LOG(ERROR, "Unable to write %d to cpuset file for core %d",
@@ -133,6 +134,9 @@ CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
             cpusetFile.seekg(0);
             return false;
         }
+    } else if (threadId == UNASSIGNED) {
+        // It is possible for a core to be reclaimed during GC
+        unmanagedCoresNeedUpdate = true;
     }
     return true;
 }
@@ -167,7 +171,7 @@ CpusetCoreSegregator::setUnmanagedCores() {
 
     std::stringstream unmanagedCores;
     std::copy(unmanagedCoreIds.begin(), unmanagedCoreIds.end(),
-              std::ostream_iterator<int>(unmanagedCores, " "));
+              std::ostream_iterator<int>(unmanagedCores, ","));
     std::string unmanagedCoresString = unmanagedCores.str();
     LOG(DEBUG, "Changing unmanaged cpuset to %s", unmanagedCoresString.c_str());
 
@@ -179,13 +183,6 @@ CpusetCoreSegregator::setUnmanagedCores() {
     }
     unmanagedCoresNeedUpdate = false;
 }
-
-//// See documentation for CoreSegregator::moveThreadToManagedCore.
-// bool
-// CpusetCoreSegregator::moveThreadToManagedCore(int threadId, int coreId) {
-//
-//    return true;
-//}
 
 /**
  * Remove non-managed threads from managed cores.
@@ -384,7 +381,7 @@ CpusetCoreSegregator::moveProcsToCpuset(std::string fromPath,
 }
 
 /**
- * Move the managed thread on the given core off of that core.
+ * See documentation for CoreSegregator::removeThreadFromCore.
  */
 bool
 CpusetCoreSegregator::removeThreadFromCore(int coreId) {

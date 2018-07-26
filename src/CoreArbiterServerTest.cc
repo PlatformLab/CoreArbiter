@@ -482,8 +482,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
 TEST_F(CoreArbiterServerTest, distributeCores_coreSharingInsufficientCores) {
     // Test Plan: Create three core arbiter clients, two of which are willing
     // to share and one of which is not.
-    // TODO: Examine a case where we should be able to fit and verify that we do
-    // fit.
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, topology,
                              fakeCoreSegregator, false);
 
@@ -515,7 +513,14 @@ TEST_F(CoreArbiterServerTest, distributeCores_coreSharingInsufficientCores) {
     EXPECT_EQ(0U, processes[2]->logicallyOwnedCores.size());
 
     int noShareId = (*processes[0]->logicallyOwnedCores.begin())->id;
-    EXPECT_TRUE(noShareId == 2 || noShareId == 3);
+    if (noShareId == 2) {
+        EXPECT_EQ(CoreSegregator::COERCE_IDLE,
+                  fakeCoreSegregator->coreToThread[3]);
+    } else {
+        EXPECT_EQ(3, noShareId);
+        EXPECT_EQ(CoreSegregator::COERCE_IDLE,
+                  fakeCoreSegregator->coreToThread[2]);
+    }
     EXPECT_EQ(1, (*processes[1]->logicallyOwnedCores.begin())->id);
 }
 

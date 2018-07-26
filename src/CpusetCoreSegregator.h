@@ -66,8 +66,6 @@ class CpusetCoreSegregator : public CoreSegregator {
 
     // True means that the next iteration of garbageCollect should write to the
     // unmanaged cpuset.
-    // TODO: Actually use this and write the code to refresh unmanaged and
-    // garbage collect, invoke code in the Server and then fix unit tests.
     bool unmanagedCoresNeedUpdate;
 
     // Used for all syscalls for easier unit testing.
