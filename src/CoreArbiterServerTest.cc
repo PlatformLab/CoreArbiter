@@ -16,10 +16,12 @@
 #include <thread>
 #define private public
 
+#include <string>
 #include "CoreArbiterServer.h"
 #include "FakeCoreSegregator.h"
 #include "Logger.h"
 #include "MockSyscall.h"
+#include "TestLog.h"
 #include "Topology.h"
 
 #undef private
@@ -27,6 +29,8 @@
 #include "gtest/gtest.h"
 
 namespace CoreArbiter {
+
+#define BRIGHT_MAGENTA(X) "\033[95m" X "\033[0m"
 
 class CoreArbiterServerTest : public ::testing::Test {
   public:
@@ -208,6 +212,7 @@ TEST_F(CoreArbiterServerTest, threadBlocking_basic) {
     processStats.numBlockedThreads = 0;
     thread->core = server.coreIdToCore[1];
     thread->state = CoreArbiterServer::RUNNING_MANAGED;
+    process->physicallyOwnedCores.push_back(thread->core);
     server.threadBlocking(socket);
     ASSERT_EQ(thread->state, CoreArbiterServer::RUNNING_MANAGED);
     ASSERT_EQ(processStats.numBlockedThreads, 0u);
@@ -435,14 +440,35 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
     processes[0]->desiredCorePriorities[1] = 2;
     processes[1]->desiredCorePriorities[1] = 1;
 
+    TestLog::clear();
     server.distributeCores();
+    std::string logOutput = TestLog::get();
+    EXPECT_NE(logOutput.find("ClientQueue.size 3"), std::string::npos);
+    EXPECT_NE(logOutput.find("maxManagedCores = 3"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 0 granted 1 cores"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 0 granted 2 cores"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 1 granted 1 cores"), std::string::npos);
+    EXPECT_EQ(logOutput.find("lastProcessGrantedIndex"), std::string::npos);
+    EXPECT_NE(logOutput.find("coresClaimed 0, numCores 2"), std::string::npos);
+    EXPECT_NE(logOutput.find("coresClaimed 0, numCores 1"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 0 gains core 3"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 0 gains core 2"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 1 gains core 1"), std::string::npos);
+
+    // Verify retention of physical cores
+    TestLog::clear();
+    server.distributeCores();
+    logOutput = TestLog::get();
+    EXPECT_NE(logOutput.find("coresClaimed 2, numCores 2"), std::string::npos);
+    EXPECT_NE(logOutput.find("coresClaimed 1, numCores 1"), std::string::npos);
+    fprintf(stderr, BRIGHT_MAGENTA("%s\n"), logOutput.c_str());
+
     EXPECT_EQ(2U, processes[0]->logicallyOwnedCores.size());
     EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
     auto it = processes[0]->logicallyOwnedCores.begin();
     int core1 = (*it)->id;
     it++;
     int core2 = (*it)->id;
-    printf("Core1 = %d, Core2 = %d\n", core1, core2);
     EXPECT_EQ(core1, topology.coreToHypertwin[core2]);
 
     // Make sure we don't get more cores than we asked for, just because more
@@ -506,7 +532,13 @@ TEST_F(CoreArbiterServerTest, distributeCores_coreSharingInsufficientCores) {
     processes[1]->desiredCorePriorities[1] = 1;
     processes[2]->desiredCorePriorities[1] = 1;
 
+    TestLog::clear();
     server.distributeCores();
+    std::string logOutput = TestLog::get();
+    EXPECT_NE(logOutput.find("ClientQueue.size 4"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 0 granted 2 cores"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 1 granted 1 cores"), std::string::npos);
+    EXPECT_NE(logOutput.find("Process 1 gains core 1"), std::string::npos);
 
     EXPECT_EQ(1U, processes[0]->logicallyOwnedCores.size());
     EXPECT_EQ(1U, processes[1]->logicallyOwnedCores.size());
@@ -792,6 +824,7 @@ TEST_F(CoreArbiterServerTest, timeoutThreadPreemption_basic) {
     ProcessInfo* process = createProcess(server, 1, &processStats);
     ThreadInfo* thread = createThread(server, 1, process, 1,
                                       CoreArbiterServer::RUNNING_MANAGED, core);
+    process->physicallyOwnedCores.push_back(thread->core);
 
     // If the client is cooperative, nothing should happen
     server.requestCoreRelease(core);
@@ -863,6 +896,7 @@ TEST_F(CoreArbiterServerTest, cleanupConnection) {
         server, 2, process, 2, CoreArbiterServer::RUNNING_PREEMPTED);
     ThreadInfo* blockedThread =
         createThread(server, 3, process, 3, CoreArbiterServer::BLOCKED);
+    process->physicallyOwnedCores.push_back(managedThread->core);
 
     server.cleanupConnection(managedThread->socket);
     ASSERT_TRUE(

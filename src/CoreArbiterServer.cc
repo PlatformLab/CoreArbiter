@@ -571,7 +571,6 @@ CoreArbiterServer::acceptConnection(int listenSocket) {
  */
 void
 CoreArbiterServer::threadBlocking(int socket) {
-    LOG(ERROR, "threadingBlocking called with socket = %d", socket);
     timeTrace("SERVER: Start handling thread blocking request");
 
     if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
@@ -824,6 +823,9 @@ CoreArbiterServer::cleanupConnection(int socket) {
 
     // Update state pertaining to cores
     if (thread->state == RUNNING_MANAGED) {
+        auto& ownedCores = thread->process->physicallyOwnedCores;
+        ownedCores.erase(
+            std::find(ownedCores.begin(), ownedCores.end(), thread->core));
         thread->core->managedThread = NULL;
         thread->core->threadRemovalTime = Cycles::rdtsc();
         process->stats->numOwnedCores--;
@@ -1166,7 +1168,7 @@ CoreArbiterServer::getProcessesOrderedByCoreCount(
     for (auto it = processToCoreCount.begin(); it != processToCoreCount.end();
          it++) {
         sortedProcesses.push_back(it->first);
-        LOG(ERROR, "Process %d joined sorted processes", it->first->id);
+        TEST_LOG("Process %d joined sorted processes", it->first->id);
     }
     // Sort processes by descending number of cores assigned.
     std::sort(sortedProcesses.begin(), sortedProcesses.end(),
@@ -1443,7 +1445,9 @@ CoreArbiterServer::distributeCores() {
                                  candidateCores.end());
             coresClaimed++;
         }
-        TEST_LOG("coresClaimed %d, numCores %d", coresClaimed, numCores);
+        TEST_LOG(
+            "coresClaimed %d, numCores %d, physicallyOwnedCores.size = %zu",
+            coresClaimed, numCores, process->physicallyOwnedCores.size());
         // Pick up additional cores if we haven't yet reached the number that
         // were earmarked for us.
         while (coresClaimed < numCores) {
@@ -1949,6 +1953,10 @@ CoreArbiterServer::moveThreadToManagedCore(struct ThreadInfo* thread,
     }
     timeTrace("SERVER: Finished moving thread to managed cpuset");
 
+    // By moving a thread to a managed core, we are granting the core to
+    // the thread's process and must account for this.
+    thread->process->physicallyOwnedCores.push_back(core);
+
     changeThreadState(thread, RUNNING_MANAGED);
     thread->core = core;
     core->managedThread = thread;
@@ -2001,6 +2009,10 @@ CoreArbiterServer::removeThreadFromManagedCore(struct ThreadInfo* thread,
         coreSegregator->removeThreadFromCore(thread->core->id);
         timeTrace("SERVER: Finished removing thread from managed cpuset");
     }
+
+    auto& ownedCores = thread->process->physicallyOwnedCores;
+    ownedCores.erase(
+        std::find(ownedCores.begin(), ownedCores.end(), thread->core));
 
     thread->process->stats->numOwnedCores--;
     thread->core->managedThread = NULL;

@@ -74,8 +74,9 @@ check:
 
 TEST_OBJECT_DIR = test_obj
 GTEST_DIR=../googletest/googletest
-TEST_LIBS=-L$(TEST_OBJECT_DIR) -lCoreArbiter $(TEST_OBJECT_DIR)/libgtest.a $(TEST_OBJECT_DIR)/TestLog.o
+TEST_LIBS=-L$(TEST_OBJECT_DIR) -lCoreArbiter $(TEST_OBJECT_DIR)/libgtest.a
 INCLUDE+=-I${GTEST_DIR}/include
+TEST_FLAGS=-DTESTING
 
 test: $(TEST_OBJECT_DIR)/CoreArbiterServerTest $(TEST_OBJECT_DIR)/CoreArbiterClientTest  \
 		$(TEST_OBJECT_DIR)/CoreArbiterRequestTest $(TEST_OBJECT_DIR)/CoreArbiterRampDownTest \
@@ -122,7 +123,7 @@ $(TEST_OBJECT_DIR)/%.d: $(SRC_DIR)/%.cc | $(TEST_OBJECT_DIR)
 	$(CXX) $(INCLUDE) $(CCFLAGS) $< -MM -MT $(@:.d=.o) > $@
 
 $(TEST_OBJECT_DIR)/%.o: $(SRC_DIR)/%.cc $(HEADERS) | $(TEST_OBJECT_DIR)
-	$(CXX) $(INCLUDE) $(CCFLAGS) -c $< -o $@
+	$(CXX) $(INCLUDE) $(CCFLAGS) $(TEST_FLAGS) -c $< -o $@
 
 $(TEST_OBJECT_DIR):
 	mkdir -p $(TEST_OBJECT_DIR)
