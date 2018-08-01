@@ -506,6 +506,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_coreSharingInsufficientCores) {
+    CoreArbiterServer::testingSkipSocketCommunication = true;
     // Test Plan: Create three core arbiter clients, two of which are willing
     // to share and one of which is not.
     CoreArbiterServer server(socketPath, memPath, {1, 2, 3}, topology,
@@ -554,9 +555,11 @@ TEST_F(CoreArbiterServerTest, distributeCores_coreSharingInsufficientCores) {
                   fakeCoreSegregator->coreToThread[2]);
     }
     EXPECT_EQ(1, (*processes[1]->logicallyOwnedCores.begin())->id);
+    CoreArbiterServer::testingSkipSocketCommunication = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_coreSharingSufficientCores) {
+    CoreArbiterServer::testingSkipSocketCommunication = true;
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
     // Test Plan: Create three core arbiter clients, two of which are willing
     // to share and one of which is not. Have enough cores for all of them.
@@ -602,9 +605,11 @@ TEST_F(CoreArbiterServerTest, distributeCores_coreSharingSufficientCores) {
     }
 
     CoreArbiterServer::testingDoNotChangeManagedCores = true;
+    CoreArbiterServer::testingSkipSocketCommunication = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
+    CoreArbiterServer::testingSkipSocketCommunication = true;
     // Test Plan: Create three core arbiter clients, and a topology with two
     // NUMANode. Verify that the appropriate core allocation was granted to
     // each process in each case below by examining the logicallyOwnedCores in
@@ -664,6 +669,7 @@ TEST_F(CoreArbiterServerTest, distributeCores_multisocket) {
 
     cores = processes[2]->logicallyOwnedCores;
     EXPECT_NE(cores.end(), cores.find(server.coreIdToCore[1]));
+    CoreArbiterServer::testingSkipSocketCommunication = false;
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_noBlockedThreads) {
