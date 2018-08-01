@@ -91,11 +91,11 @@ CpusetCoreSegregator::CpusetCoreSegregator() {
 
     // Create separate cpuset files for every core's tasks
     for (int coreId : managedCoreIds) {
-        std::string managedTasksPath =
+        coreToCpusetPath[coreId] =
             arbiterCpusetPath + "/Managed" + std::to_string(coreId) + "/tasks";
-        coreToCpusetFile[coreId].open(managedTasksPath);
+        coreToCpusetFile[coreId].open(coreToCpusetPath[coreId]);
         if (!coreToCpusetFile[coreId].is_open()) {
-            LOG(ERROR, "Unable to open %s", managedTasksPath.c_str());
+            LOG(ERROR, "Unable to open %s", coreToCpusetPath[coreId].c_str());
             exit(-1);
         }
     }
@@ -130,8 +130,10 @@ CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
             // close and reopen the file to prevent future errors.
             LOG(ERROR, "Unable to write %d to cpuset file for core %d",
                 threadId, coreId);
+            cpusetFile.close();
             cpusetFile.clear();
-            cpusetFile.seekg(0);
+            usleep(750);
+            cpusetFile.open(coreToCpusetPath[coreId]);
             return false;
         }
     } else if (threadId == UNASSIGNED) {

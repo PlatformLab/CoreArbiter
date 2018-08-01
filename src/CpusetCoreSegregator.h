@@ -56,6 +56,10 @@ class CpusetCoreSegregator : public CoreSegregator {
     // The files used to manage which thread lives on each core.
     std::unordered_map<int, std::fstream> coreToCpusetFile;
 
+    // The paths to the files in coreToCpusetFile. Used for reopening when a
+    // cpuset write fails, which is not uncommon.
+    std::unordered_map<int, std::string> coreToCpusetPath;
+
     // The mapping of cores to threadIds. Values above 0 are actual thread ids;
     // values below zero are special states a core may be in.
     std::unordered_map<int, int> coreToThread;
