@@ -770,6 +770,18 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
         return;
     }
 
+    // Check if the preemption request is still in force. This is neccessary
+    // because it is possible for a process to lose and then regain the core
+    // that the timer is associated with in the time between the time the timer
+    // was set and the time it went off.
+    if (!thread->core->coreReleaseRequested) {
+        LOG(DEBUG,
+            "Core retrieval timer went off for process %d, but process "
+            "already released the core it was supposed to.\n",
+            process->id);
+        return;
+    }
+
     timeTrace("SERVER: Timing out thread preemption");
 
     LOG(DEBUG,
@@ -1152,9 +1164,15 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
                 // point distributeCores() will be called again and this core
                 // will be filled.
                 LOG(ERROR,
-                    "Skipping assignment of core %d because were were "
+                    "Skipping assignment of core %d because we were "
                     "unable to write to it\n",
                     core->id);
+                continue;
+            }
+
+            // Awaken the blocked thread.
+            if (!testingSkipSocketCommunication) {
+                wakeupThread(thread, core);
             }
         }
     }
@@ -1808,7 +1826,6 @@ void
 CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
     // TODO(jspeiser): Setting up this timer takes ~3us. Could be optimized by
     // keeping a single timer for everything.
-
     if (!core->managedThread) {
         LOG(WARNING, "There is no thread on core %d to preempt", core->id);
         return;
