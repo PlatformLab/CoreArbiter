@@ -50,6 +50,9 @@ class CpusetCoreSegregator : public CoreSegregator {
     // The path to the CpusetCoreSegregator's cpuset directory.
     static std::string arbiterCpusetPath;
 
+    // The path to the file where unmanaged tasks are written.
+    std::string unmanagedTasksPath;
+
     // The files used to manage which thread lives on each core.
     std::unordered_map<int, std::fstream> coreToCpusetFile;
 

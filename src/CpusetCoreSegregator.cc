@@ -82,7 +82,7 @@ CpusetCoreSegregator::CpusetCoreSegregator() {
 
     // Set up the file we will use to control which threads are in the
     // unmanaged cpuset.
-    std::string unmanagedTasksPath = unmanagedCpusetPath + "/tasks";
+    unmanagedTasksPath = unmanagedCpusetPath + "/tasks";
     unmanagedCpusetTasks.open(unmanagedTasksPath);
     if (!unmanagedCpusetTasks.is_open()) {
         LOG(ERROR, "Unable to open %s", unmanagedTasksPath.c_str());
@@ -213,6 +213,8 @@ CpusetCoreSegregator::removeExtraneousThreads() {
                 unmanagedCpusetTasks << threadId;
                 unmanagedCpusetTasks.flush();
                 if (unmanagedCpusetTasks.bad()) {
+                    unmanagedCpusetTasks.close();
+                    unmanagedCpusetTasks.open(unmanagedTasksPath);
                     // This error is likely because the thread has exited.
                     // Sleeping helps keep the kernel from giving more errors
                     // the next time we try to move a legitimate thread.
