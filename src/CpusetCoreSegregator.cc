@@ -15,12 +15,17 @@
 #include "CpusetCoreSegregator.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <fstream>
 #include <iterator>
 #include <sstream>
 #include <thread>
 
 #include "Logger.h"
+#include "PerfUtils/Util.h"
+#include "string.h"
 
 namespace CoreArbiter {
 
@@ -74,18 +79,20 @@ CpusetCoreSegregator::CpusetCoreSegregator() {
     // Set up the file we will use to control how many cores are in the
     // unmanaged cpuset.
     std::string unmanagedCpusPath = unmanagedCpusetPath + "/cpuset.cpus";
-    unmanagedCpusetCpus.open(unmanagedCpusPath);
-    if (!unmanagedCpusetCpus.is_open()) {
-        LOG(ERROR, "Unable to open %s", unmanagedCpusPath.c_str());
+    unmanagedCpusetCpus = open(unmanagedCpusPath.c_str(), O_RDWR);
+    if (unmanagedCpusetCpus < 0) {
+        LOG(ERROR, "Unable to open %s; errno %d: %s", unmanagedCpusPath.c_str(),
+            errno, strerror(errno));
         exit(-1);
     }
 
     // Set up the file we will use to control which threads are in the
     // unmanaged cpuset.
     unmanagedTasksPath = unmanagedCpusetPath + "/tasks";
-    unmanagedCpusetTasks.open(unmanagedTasksPath);
-    if (!unmanagedCpusetTasks.is_open()) {
-        LOG(ERROR, "Unable to open %s", unmanagedTasksPath.c_str());
+    unmanagedCpusetTasks = open(unmanagedTasksPath.c_str(), O_RDWR);
+    if (!unmanagedCpusetTasks < 0) {
+        LOG(ERROR, "Unable to open %s; errno %d: %s",
+            unmanagedTasksPath.c_str(), errno, strerror(errno));
         exit(-1);
     }
 
@@ -93,9 +100,11 @@ CpusetCoreSegregator::CpusetCoreSegregator() {
     for (int coreId : managedCoreIds) {
         coreToCpusetPath[coreId] =
             arbiterCpusetPath + "/Managed" + std::to_string(coreId) + "/tasks";
-        coreToCpusetFile[coreId].open(coreToCpusetPath[coreId]);
-        if (!coreToCpusetFile[coreId].is_open()) {
-            LOG(ERROR, "Unable to open %s", coreToCpusetPath[coreId].c_str());
+        coreToCpusetFile[coreId] =
+            open(coreToCpusetPath[coreId].c_str(), O_RDWR);
+        if (coreToCpusetFile[coreId] < 0) {
+            LOG(ERROR, "Unable to open %s; errno %d: %s",
+                coreToCpusetPath[coreId].c_str(), errno, strerror(errno));
             exit(-1);
         }
     }
@@ -104,7 +113,7 @@ CpusetCoreSegregator::CpusetCoreSegregator() {
 // Destructor
 CpusetCoreSegregator::~CpusetCoreSegregator() {
     for (auto& it : coreToCpusetFile) {
-        it.second.close();
+        close(it.second);
     }
     removeOldCpusets();
 }
@@ -121,19 +130,19 @@ CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
     // If there is a special state, it will get picked up by garbage
     // collection.
     if (threadId > 0) {
-        std::fstream& cpusetFile = coreToCpusetFile[coreId];
-        cpusetFile.seekg(0);
-        cpusetFile << threadId << std::endl;
-        cpusetFile.flush();
-        if (cpusetFile.fail()) {
+        int cpusetFile = coreToCpusetFile[coreId];
+        char threadIdStr[100];
+        sprintf(threadIdStr, "%d\n", threadId);
+
+        lseek(cpusetFile, 0, SEEK_SET);
+
+        int retVal = write(cpusetFile, threadIdStr, strlen(threadIdStr));
+        if (retVal < 0) {
             // This error is likely because the thread has exited. We need to
             // close and reopen the file to prevent future errors.
-            LOG(ERROR, "Unable to write %d to cpuset file for core %d",
-                threadId, coreId);
-            cpusetFile.close();
-            cpusetFile.clear();
-            usleep(750);
-            cpusetFile.open(coreToCpusetPath[coreId]);
+            LOG(ERROR,
+                "Unable to write %d to cpuset file for core %d; errno %d: %s",
+                threadId, coreId, errno, strerror(errno));
             return false;
         }
     } else if (threadId == UNASSIGNED) {
@@ -174,13 +183,15 @@ CpusetCoreSegregator::setUnmanagedCores() {
     std::stringstream unmanagedCores;
     std::copy(unmanagedCoreIds.begin(), unmanagedCoreIds.end(),
               std::ostream_iterator<int>(unmanagedCores, ","));
-    std::string unmanagedCoresString = unmanagedCores.str();
+    std::string unmanagedCoresString = unmanagedCores.str() + "\n";
     LOG(DEBUG, "Changing unmanaged cpuset to %s", unmanagedCoresString.c_str());
 
-    unmanagedCpusetCpus << unmanagedCoresString << std::endl;
+    int retVal = write(unmanagedCpusetCpus, unmanagedCoresString.c_str(),
+                       unmanagedCoresString.size());
 
-    if (unmanagedCpusetCpus.bad()) {
-        LOG(ERROR, "Failed to write to unmanagedCpusetPus");
+    if (retVal < 0) {
+        LOG(ERROR, "Failed to write to unmanagedCpusetPus; errno %d: %s", errno,
+            strerror(errno));
         abort();
     }
     unmanagedCoresNeedUpdate = false;
@@ -200,29 +211,29 @@ CpusetCoreSegregator::removeExtraneousThreads() {
 
         int threadId = coreToThread[coreId];
         if (threadId > 0 || threadId == COERCE_IDLE) {
-            std::fstream& fromFile = coreToCpusetFile[coreId];
-            fromFile.clear();
-            fromFile.seekg(0);
+            int fromFile = coreToCpusetFile[coreId];
+            std::vector<int> tids =
+                PerfUtils::Util::readIntegers(fromFile, '\n');
 
-            int threadId;
-            while (fromFile >> threadId) {
+            for (int threadId : tids) {
                 // The managed thread should stay put.
                 if (threadId == coreToThread[coreId])
                     continue;
 
                 // Every other thread should be moved to the
                 // unmanagedCpusetTasks.
-                unmanagedCpusetTasks << threadId;
-                unmanagedCpusetTasks.flush();
-                if (unmanagedCpusetTasks.bad()) {
-                    unmanagedCpusetTasks.close();
-                    unmanagedCpusetTasks.open(unmanagedTasksPath);
+                char threadIdStr[100];
+                sprintf(threadIdStr, "%d\n", threadId);
+                int retVal = write(unmanagedCpusetTasks, threadIdStr,
+                                   strlen(threadIdStr));
+                if (retVal < 0) {
                     // This error is likely because the thread has exited.
                     // Sleeping helps keep the kernel from giving more errors
                     // the next time we try to move a legitimate thread.
-                    LOG(ERROR, "Unable to write %d to unmanaged cpuset file",
-                        threadId);
-                    usleep(750);
+                    LOG(ERROR,
+                        "Unable to write %d to unmanaged cpuset file; errno "
+                        "%d: %s",
+                        threadId, errno, strerror(errno));
                 }
             }
         }
@@ -320,22 +331,34 @@ CpusetCoreSegregator::createCpuset(std::string dirName, std::string cores,
     }
 
     std::string memsPath = dirName + "/cpuset.mems";
-    std::ofstream memsFile(memsPath);
-    if (!memsFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", memsPath.c_str());
+    int memsFile = open(memsPath.c_str(), O_WRONLY);
+    if (memsFile < 0) {
+        LOG(ERROR, "Unable to open %s; errno %d: %s", memsPath.c_str(), errno,
+            strerror(errno));
         exit(-1);
     }
-    memsFile << mems;
-    memsFile.close();
+    int bytesWritten = write(memsFile, mems.c_str(), mems.size());
+    if (bytesWritten < 0) {
+        LOG(ERROR, "Unable to write to %s; errno %d: %s", memsPath.c_str(),
+            errno, strerror(errno));
+        exit(-1);
+    }
+    close(memsFile);
 
     std::string cpusPath = dirName + "/cpuset.cpus";
-    std::ofstream cpusFile(cpusPath);
-    if (!cpusFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", cpusPath.c_str());
+    int cpusFile = open(cpusPath.c_str(), O_WRONLY);
+    if (cpusFile < 0) {
+        LOG(ERROR, "Unable to open %s; errno %d: %s", cpusPath.c_str(), errno,
+            strerror(errno));
         exit(-1);
     }
-    cpusFile << cores;
-    cpusFile.close();
+    bytesWritten = write(cpusFile, cores.c_str(), cores.size());
+    if (bytesWritten < 0) {
+        LOG(ERROR, "Unable to write to %s; errno %d: %s", cpusPath.c_str(),
+            errno, strerror(errno));
+        exit(-1);
+    }
+    close(cpusFile);
 }
 
 /**
@@ -352,36 +375,36 @@ CpusetCoreSegregator::moveProcsToCpuset(std::string fromPath,
                                         std::string toPath) {
     LOG(DEBUG, "Moving procs in %s to %s", fromPath.c_str(), toPath.c_str());
 
-    std::ifstream fromFile(fromPath);
-    if (!fromFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", fromPath.c_str());
+    int fromFile = open(fromPath.c_str(), O_RDONLY);
+    if (fromFile < 0) {
+        LOG(ERROR, "Unable to open %s; errno %d: %s", fromPath.c_str(), errno,
+            strerror(errno));
         exit(-1);
     }
 
-    std::ofstream toFile(toPath);
-    if (!toFile.is_open()) {
-        LOG(ERROR, "Unable to open %s", toPath.c_str());
+    int toFile = open(toPath.c_str(), O_WRONLY);
+    if (toFile < 0) {
+        LOG(ERROR, "Unable to open %s; errno %d: %s", toPath.c_str(), errno,
+            strerror(errno));
         exit(-1);
     }
 
-    pid_t processId;
-    while (fromFile >> processId) {
-        toFile << processId;
-        toFile << std::endl;
-        if (toFile.bad()) {
-            // The ofstream errors out if we try to move a kernel process. This
-            // is normal behavior, but it means we need to reopen the file.
-            toFile.close();
-            toFile.open(toPath, std::fstream::app);
-            if (!toFile.is_open()) {
-                LOG(ERROR, "Unable top open %s", toPath.c_str());
-                exit(-1);
-            }
+    std::vector<int> fromPids = PerfUtils::Util::readIntegers(fromFile, '\n');
+
+    for (pid_t processId : fromPids) {
+        char processIdStr[100];
+        sprintf(processIdStr, "%d\n", processId);
+        int bytesWritten = write(toFile, processIdStr, strlen(processIdStr));
+        if (bytesWritten < 0) {
+            // Writing fails if we try to move a kernel process. This is normal
+            // behavior, and so we can ignore it.
+            LOG(DEBUG, "Unable to write %d to %s; errno %d: %s", processId,
+                toPath.c_str(), errno, strerror(errno));
         }
     }
 
-    fromFile.close();
-    toFile.close();
+    close(fromFile);
+    close(toFile);
 }
 
 /**
@@ -397,16 +420,19 @@ CpusetCoreSegregator::removeThreadFromCore(int coreId) {
         LOG(ERROR, "No thread found on core %d", coreId);
         exit(-1);
     }
-    unmanagedCpusetTasks << threadId;
-    unmanagedCpusetTasks.flush();
-    if (unmanagedCpusetTasks.bad()) {
-        // This error is likely because the thread has exited. Sleeping
-        // helps keep the kernel from giving more errors the next time we
-        // try to move a legitimate thread.
-        LOG(ERROR, "Unable to write %d to unmanaged cpuset file", threadId);
-        usleep(750);
+
+    char threadIdStr[100];
+    sprintf(threadIdStr, "%d\n", threadId);
+    int retVal = write(unmanagedCpusetTasks, threadIdStr, strlen(threadIdStr));
+    if (retVal < 0) {
+        // This error is likely because the thread has exited.
+        // Sleeping helps keep the kernel from giving more errors
+        // the next time we try to move a legitimate thread.
+        LOG(ERROR, "Unable to write %d to unmanaged cpuset file; errno %d: %s",
+            threadId, errno, strerror(errno));
         return false;
     }
+
     coreToThread[coreId] = UNASSIGNED;
     return true;
 }
