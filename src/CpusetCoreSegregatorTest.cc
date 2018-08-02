@@ -55,16 +55,30 @@ class CpusetCoreSegregatorTest : public ::testing::Test {
      * Test whether the given thread appears in the task list of the given core.
      */
     bool threadOnCore(int thread, int core) {
-        std::fstream& cpusetFile = cpusetCoreSegregator->coreToCpusetFile[core];
-        cpusetFile.seekg(0);
-        int value;
-        while (cpusetFile >> value) {
-            if (value == thread) {
+        int cpusetFile = cpusetCoreSegregator->coreToCpusetFile[core];
+        std::vector<int> tids = PerfUtils::Util::readIntegers(cpusetFile, '\n');
+        for (int tid : tids) {
+            if (tid == thread) {
                 return true;
             }
         }
         return false;
     }
+    /**
+     * Test whether the given thread appears in the task list of the unmanaged
+     * cores.
+     */
+    bool threadUnmanaged(int thread) {
+        int cpusetFile = cpusetCoreSegregator->unmanagedCpusetTasks;
+        std::vector<int> tids = PerfUtils::Util::readIntegers(cpusetFile, '\n');
+        for (int tid : tids) {
+            if (tid == thread) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Helper function for tests with timing dependencies, so that we wait for a
     // finite amount of time in the case of a bug causing an infinite loop.
     bool limitedTimeWait(std::function<bool()> condition,
@@ -117,6 +131,7 @@ TEST_F(CpusetCoreSegregatorTest, removeThreadFromCore) {
     cpusetCoreSegregator->removeThreadFromCore(0);
     EXPECT_EQ(cpusetCoreSegregator->coreToThread[0],
               CoreSegregator::UNASSIGNED);
+    EXPECT_TRUE(threadUnmanaged(pid));
     sleep(1);
     EXPECT_TRUE(limitedTimeWait([=]() { return !threadOnCore(pid, 0); }));
     ASSERT_DEATH(cpusetCoreSegregator->removeThreadFromCore(1),
@@ -139,6 +154,9 @@ TEST_F(CpusetCoreSegregatorTest, garbageCollect) {
 
     EXPECT_EQ(cpusetCoreSegregator->coreToThread[0], ppid);
     EXPECT_EQ(cpusetCoreSegregator->coreToThread[1], CoreSegregator::UNMANAGED);
+    EXPECT_TRUE(threadUnmanaged(pid));
+    sleep(1);
+    limitedTimeWait([this, pid]() { return !threadOnCore(pid, 0); });
     EXPECT_FALSE(threadOnCore(pid, 0));
     limitedTimeWait([this, ppid]() { return threadOnCore(ppid, 0); });
     EXPECT_FALSE(cpusetCoreSegregator->unmanagedCoresNeedUpdate);

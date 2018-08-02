@@ -18,8 +18,6 @@
 #include "CoreSegregator.h"
 #include "Syscall.h"
 
-#include <fstream>
-#include <iostream>
 #include <string>
 #include <unordered_map>
 
@@ -54,7 +52,7 @@ class CpusetCoreSegregator : public CoreSegregator {
     std::string unmanagedTasksPath;
 
     // The files used to manage which thread lives on each core.
-    std::unordered_map<int, std::fstream> coreToCpusetFile;
+    std::unordered_map<int, int> coreToCpusetFile;
 
     // The paths to the files in coreToCpusetFile. Used for reopening when a
     // cpuset write fails, which is not uncommon.
@@ -65,11 +63,11 @@ class CpusetCoreSegregator : public CoreSegregator {
     std::unordered_map<int, int> coreToThread;
 
     // The file used to change which cores belong to the unmanaged cpuset.
-    std::ofstream unmanagedCpusetCpus;
+    int unmanagedCpusetCpus;
 
     // The file used to change which threads are running on the unmanaged
     // cpuset.
-    std::ofstream unmanagedCpusetTasks;
+    int unmanagedCpusetTasks;
 
     // True means that the next iteration of garbageCollect should write to the
     // unmanaged cpuset.
