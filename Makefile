@@ -84,8 +84,9 @@ test: $(TEST_OBJECT_DIR)/CoreArbiterServerTest $(TEST_OBJECT_DIR)/CoreArbiterCli
 	$(TEST_OBJECT_DIR)/CoreArbiterServerTest
 	$(TEST_OBJECT_DIR)/CoreArbiterClientTest
 	$(TEST_OBJECT_DIR)/CpusetCoreSegregatorTest
-	# The following test is built but must be run manually for now.
+	# The following tests are built but must be run manually for now.
 	# $(TEST_OBJECT_DIR)/CoreArbiterRequestTest
+	# $(TEST_OBJECT_DIR)/CoreArbiterRampDownTest
 
 $(TEST_OBJECT_DIR)/CoreArbiterServerTest: $(TEST_OBJECT_DIR)/CoreArbiterServerTest.o $(TEST_OBJECT_DIR)/FakeCoreSegregator.o \
 									 $(TEST_OBJECT_DIR)/libgtest.a $(TEST_OBJECT_DIR)/libCoreArbiter.a
