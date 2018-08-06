@@ -17,7 +17,9 @@
 #include <atomic>
 #include <thread>
 
+#define private public
 #include "CoreArbiterClient.h"
+#undef private
 #include "Logger.h"
 #include "PerfUtils/Cycles.h"
 #include "PerfUtils/Stats.h"
@@ -36,6 +38,7 @@
 // #define PAUSE_AT_ALLOCATION 1
 
 using CoreArbiter::CoreArbiterClient;
+using CoreArbiter::Logger;
 using PerfUtils::Cycles;
 using PerfUtils::TimeTrace;
 
@@ -52,7 +55,11 @@ coreExec(CoreArbiterClient* client) {
         client->blockUntilCoreAvailable();
         while (!client->mustReleaseCore())
             ;
+        LOG(CoreArbiter::NOTICE,
+            "Thread %d running on core %d detected core release request.",
+            client->sys->gettid(), client->coreId);
     }
+    printf("Thread exited\n");
 }
 
 /**
@@ -63,6 +70,7 @@ int
 main(int argc, const char** argv) {
     const int MAX_CORES = std::thread::hardware_concurrency() - 1;
     CoreArbiterClient* client = CoreArbiterClient::getInstance();
+    Logger::setLogLevel(CoreArbiter::NOTICE);
 
     // Start up several threads to actually ramp up and down
     for (int i = 0; i < MAX_CORES; i++)
@@ -77,14 +85,14 @@ main(int argc, const char** argv) {
             coreRequest[0] = j;
             client->setRequestedCores(coreRequest);
 #if PAUSE_AT_ALLOCATION
-            sleep(2);
+            usleep(200);
 #endif
         }
         for (; j > 0; j--) {
             coreRequest[0] = j;
             client->setRequestedCores(coreRequest);
 #if PAUSE_AT_ALLOCATION
-            sleep(2);
+            usleep(200);
 #endif
         }
     }
