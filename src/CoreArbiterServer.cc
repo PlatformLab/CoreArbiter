@@ -572,6 +572,7 @@ CoreArbiterServer::acceptConnection(int listenSocket) {
 void
 CoreArbiterServer::threadBlocking(int socket) {
     timeTrace("SERVER: Start handling thread blocking request");
+    LOG(DEBUG, "Entering threadBlocking method for socket %d.", socket);
 
     if (threadSocketToInfo.find(socket) == threadSocketToInfo.end()) {
         LOG(WARNING, "Unknown thread is blocking");
@@ -639,6 +640,8 @@ CoreArbiterServer::threadBlocking(int socket) {
     }
 
     changeThreadState(thread, BLOCKED);
+    LOG(DEBUG, "There are now %zu blocked threads!",
+        process->threadStateToSet[BLOCKED].size());
     process->stats->numBlockedThreads++;
 
     LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
@@ -801,6 +804,8 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
 
     thread->core->coreReleaseRequested = false;
     removeThreadFromManagedCore(thread);
+    LOG(ERROR, "Thread %d in state %d is being preempted", thread->id,
+        thread->state);
     changeThreadState(thread, RUNNING_PREEMPTED);
     process->stats->preemptedCount++;
     distributeCores();
@@ -825,7 +830,7 @@ CoreArbiterServer::cleanupConnection(int socket) {
     ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
 
-    LOG(DEBUG, "Cleaning up state for thread %d", thread->id);
+    LOG(ERROR, "Cleaning up state for thread %d", thread->id);
 
     if (sys->close(socket) < 0) {
         LOG(ERROR, "Error closing socket: %s", strerror(errno));
@@ -1147,8 +1152,14 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
             if (blockedThreads.empty()) {
                 LOG(ERROR,
                     "Process %d has requested %d cores, but has run out of "
-                    "blocked threads",
-                    process->id, process->getTotalDesiredCores());
+                    "blocked threads; there are %zu threads in the "
+                    "RUNNING_MANAGED state"
+                    ", %zu threads in the RUNNING_PREEMPTED state"
+                    ", %zu threads in the RUNNING_UNMANAGED state",
+                    process->id, process->getTotalDesiredCores(),
+                    process->threadStateToSet[RUNNING_MANAGED].size(),
+                    process->threadStateToSet[RUNNING_PREEMPTED].size(),
+                    process->threadStateToSet[RUNNING_UNMANAGED].size());
                 continue;
             }
 
@@ -1834,6 +1845,10 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
             core->id);
         return;
     }
+    LOG(DEBUG,
+        "Requesting preemption on core %d, which contains thread %d in state "
+        "%d",
+        core->id, core->managedThread->id, core->managedThread->state);
 
     timeTrace("SERVER: Requesting core release");
 
