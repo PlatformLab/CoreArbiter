@@ -44,7 +44,8 @@ parseOptions(int* argcp, const char** argv) {
         bool takesArgument;
     } optionSpecifiers[] = {{"socketPath", 'p', true},
                             {"sharedMemoryPath", 'm', true},
-                            {"coresUsed", 's', true}};
+                            {"coresUsed", 's', true},
+                            {"logLevel", 'l', true}};
     const int UNRECOGNIZED = ~0;
 
     int i = 1;
@@ -93,6 +94,9 @@ parseOptions(int* argcp, const char** argv) {
                     coresUsed = std::vector<int>();
                 else
                     coresUsed = PerfUtils::Util::parseRanges(optionArgument);
+                break;
+            case 'l':
+                Logger::setLogLevel(optionArgument);
                 break;
             case UNRECOGNIZED:
                 LOG(CoreArbiter::ERROR, "Unrecognized option %s given.",
