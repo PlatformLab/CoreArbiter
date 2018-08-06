@@ -17,6 +17,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <fstream>
 #include <iterator>
@@ -25,9 +26,10 @@
 
 #include "Logger.h"
 #include "PerfUtils/Util.h"
-#include "string.h"
 
 namespace CoreArbiter {
+
+#define MAX_PID_LENGTH 100
 
 std::string CpusetCoreSegregator::cpusetPath = "/sys/fs/cgroup/cpuset";
 std::string CpusetCoreSegregator::arbiterCpusetPath =
@@ -131,8 +133,8 @@ CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
     // collection.
     if (threadId > 0) {
         int cpusetFile = coreToCpusetFile[coreId];
-        char threadIdStr[100];
-        sprintf(threadIdStr, "%d\n", threadId);
+        char threadIdStr[MAX_PID_LENGTH];
+        snprintf(threadIdStr, MAX_PID_LENGTH, "%d\n", threadId);
 
         lseek(cpusetFile, 0, SEEK_SET);
 
@@ -222,8 +224,8 @@ CpusetCoreSegregator::removeExtraneousThreads() {
 
                 // Every other thread should be moved to the
                 // unmanagedCpusetTasks.
-                char threadIdStr[100];
-                sprintf(threadIdStr, "%d\n", threadId);
+                char threadIdStr[MAX_PID_LENGTH];
+                snprintf(threadIdStr, MAX_PID_LENGTH, "%d\n", threadId);
                 ssize_t retVal = write(unmanagedCpusetTasks, threadIdStr,
                                        strlen(threadIdStr));
                 if (retVal < 0) {
@@ -392,8 +394,8 @@ CpusetCoreSegregator::moveProcsToCpuset(std::string fromPath,
     std::vector<int> fromPids = PerfUtils::Util::readIntegers(fromFile, '\n');
 
     for (pid_t processId : fromPids) {
-        char processIdStr[100];
-        sprintf(processIdStr, "%d\n", processId);
+        char processIdStr[MAX_PID_LENGTH];
+        snprintf(processIdStr, MAX_PID_LENGTH, "%d\n", processId);
         ssize_t bytesWritten =
             write(toFile, processIdStr, strlen(processIdStr));
         if (bytesWritten < 0) {
@@ -422,8 +424,8 @@ CpusetCoreSegregator::removeThreadFromCore(int coreId) {
         exit(-1);
     }
 
-    char threadIdStr[100];
-    sprintf(threadIdStr, "%d\n", threadId);
+    char threadIdStr[MAX_PID_LENGTH];
+    snprintf(threadIdStr, MAX_PID_LENGTH, "%d\n", threadId);
     ssize_t bytesWritten =
         write(unmanagedCpusetTasks, threadIdStr, strlen(threadIdStr));
     if (bytesWritten < 0) {

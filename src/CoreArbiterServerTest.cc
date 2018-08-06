@@ -501,8 +501,6 @@ TEST_F(CoreArbiterServerTest, distributeCores_basics) {
 
     CoreArbiterServer::testingSkipSocketCommunication = false;
     CoreArbiterServer::testingDoNotChangeManagedCores = false;
-    // TODO: Add debug logging (RC Style) to examine the internals of the
-    // client queues, instead of relying on manually examining log messages.
 }
 
 TEST_F(CoreArbiterServerTest, distributeCores_coreSharingInsufficientCores) {
