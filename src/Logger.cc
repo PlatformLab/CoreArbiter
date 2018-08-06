@@ -14,6 +14,8 @@
  */
 
 #include "Logger.h"
+
+#include <string.h>
 #include "PerfUtils/Cycles.h"
 
 namespace CoreArbiter {
@@ -61,6 +63,21 @@ Logger::log(const CodeLocation& where, LogLevel level, const char* fmt, ...) {
     Lock lock(mutex);
     fprintf(errorStream, "%s\n", buffer);
     fflush(errorStream);
+}
+
+void
+Logger::setLogLevel(const char* level) {
+    if (strcmp(level, "DEBUG") == 0) {
+        displayMinLevel = DEBUG;
+    } else if (strcmp(level, "NOTICE") == 0) {
+        displayMinLevel = NOTICE;
+    } else if (strcmp(level, "WARNING") == 0) {
+        displayMinLevel = WARNING;
+    } else if (strcmp(level, "ERROR") == 0) {
+        displayMinLevel = ERROR;
+    } else if (strcmp(level, "SILENT") == 0) {
+        displayMinLevel = SILENT;
+    }
 }
 
 }  // namespace CoreArbiter

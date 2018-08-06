@@ -21,7 +21,6 @@
 #include <mutex>
 
 #include "CodeLocation.h"
-#include "Colors.h"
 
 #define LOG(level, format, ...)                          \
     do {                                                 \
@@ -38,9 +37,14 @@ enum LogLevel { DEBUG, NOTICE, WARNING, ERROR, SILENT };
 class Logger {
   public:
     /**
-     * Used to set the minimum severity to print out.
+     * Set the minimum severity to print out.
      */
     static void setLogLevel(LogLevel level) { displayMinLevel = level; }
+
+    /**
+     * Set the minimum severity to print out, using a string.
+     */
+    static void setLogLevel(const char* level);
 
     /**
      * Change the target of the error stream, allowing redirection to an
