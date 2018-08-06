@@ -29,7 +29,7 @@ namespace CoreArbiter {
  */
 class FakeCoreSegregator : public CoreSegregator {
   public:
-    FakeCoreSegregator(Topology topology);
+    explicit FakeCoreSegregator(Topology topology);
     virtual ~FakeCoreSegregator();
     bool setThreadForCore(int coreId, int threadId);
     bool removeThreadFromCore(int coreId);

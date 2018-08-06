@@ -109,7 +109,7 @@ class CoreArbiterServer {
 
         CoreInfo() : managedThread(NULL) {}
 
-        CoreInfo(int id)
+        explicit CoreInfo(int id)
             : id(id),
               managedThread(NULL),
               coreReleaseRequested(false),
@@ -233,8 +233,8 @@ class CoreArbiterServer {
 
         // Get the ID of the socket that
         int getPreferredSocket(const Topology& t) {
-            // TODO: Decide whether we want to instead prefer a socket with
-            // more free logically cores.
+            // TODO(hq6): Decide whether we want to instead prefer a socket with
+            // more logically free cores.
             if (logicallyOwnedCores.empty())
                 return t.nodes[0].id;
             return t.coreToSocket.at((*logicallyOwnedCores.begin())->id);
