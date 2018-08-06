@@ -21,7 +21,6 @@
 #include <mutex>
 
 #include "CodeLocation.h"
-#include "Colors.h"
 
 #define LOG(level, format, ...)                          \
     do {                                                 \
