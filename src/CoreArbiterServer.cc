@@ -917,7 +917,7 @@ CoreArbiterServer::cleanupConnection(int socket) {
  */
 CoreArbiterServer::CoreInfo*
 CoreArbiterServer::findGoodCoreForProcess(
-    ProcessInfo* process, std::deque<struct CoreInfo*>& candidates) {
+    ProcessInfo* process, std::deque<struct CoreInfo*>& candidateCores) {
     // Compute the set of cores this process currently has managed threads
     // on, which may be empty.
     std::unordered_set<int> coresOwnedByProcess;
@@ -928,7 +928,7 @@ CoreArbiterServer::findGoodCoreForProcess(
     }
 
     std::unordered_set<int> availableManagedCoreIds;
-    for (struct CoreInfo* candidate : candidates) {
+    for (struct CoreInfo* candidate : candidateCores) {
         availableManagedCoreIds.insert(candidate->id);
     }
 
@@ -949,15 +949,16 @@ CoreArbiterServer::findGoodCoreForProcess(
             // exchange if such a core is available.
             if (coreIdToCore.find(hyperId) == coreIdToCore.end()) {
                 CoreInfo* replacementCore =
-                    findCoreWithSchedulableHyper(candidates);
+                    findCoreWithSchedulableHyper(candidateCores);
                 if (replacementCore != NULL) {
                     // Replace our core (in logicallyOwnedCores) with the
                     // replacement core.
                     core->owner = NULL;
                     process->logicallyOwnedCores.erase(core);
-                    candidates.push_back(core);
-                    candidates.erase(std::find(
-                        candidates.begin(), candidates.end(), replacementCore));
+                    candidateCores.push_back(core);
+                    candidateCores.erase(std::find(candidateCores.begin(),
+                                                   candidateCores.end(),
+                                                   replacementCore));
 
                     process->logicallyOwnedCores.insert(replacementCore);
                     replacementCore->owner = process;
@@ -984,18 +985,18 @@ CoreArbiterServer::findGoodCoreForProcess(
             CoreInfo* desiredCore = coreIdToCore[hyperId];
             // This desired core is in one of two states.
             // 1) It is owned by another process.
-            // 2) It is part of the candidates list.
-            auto it =
-                std::find(candidates.begin(), candidates.end(), desiredCore);
-            if (it != candidates.end()) {
-                candidates.erase(it);
+            // 2) It is part of the candidateCores list.
+            auto it = std::find(candidateCores.begin(), candidateCores.end(),
+                                desiredCore);
+            if (it != candidateCores.end()) {
+                candidateCores.erase(it);
             } else {
                 ProcessInfo* formerOwner = desiredCore->owner;
                 if (formerOwner != process) {
                     ProcessInfo* formerOwner = desiredCore->owner;
                     formerOwner->logicallyOwnedCores.erase(desiredCore);
                     formerOwner->logicallyOwnedCores.insert(
-                        findGoodCoreForProcess(formerOwner, candidates));
+                        findGoodCoreForProcess(formerOwner, candidateCores));
                 }
             }
             return desiredCore;
@@ -1004,20 +1005,21 @@ CoreArbiterServer::findGoodCoreForProcess(
 
     // Next look for a core whose hypertwin is also in the set of
     // currently available cores.
-    for (struct CoreInfo* candidate : candidates) {
+    for (struct CoreInfo* candidate : candidateCores) {
         int hyperId = topology.coreToHypertwin[candidate->id];
         if (availableManagedCoreIds.find(hyperId) !=
             availableManagedCoreIds.end()) {
-            candidates.erase(
-                std::find(candidates.begin(), candidates.end(), candidate));
+            candidateCores.erase(std::find(candidateCores.begin(),
+                                           candidateCores.end(), candidate));
             return candidate;
         }
     }
 
     // Pick a core while respecting constraints
-    CoreInfo* core = findCoreWithSchedulableHyper(candidates);
+    CoreInfo* core = findCoreWithSchedulableHyper(candidateCores);
     if (core != NULL) {
-        candidates.erase(std::find(candidates.begin(), candidates.end(), core));
+        candidateCores.erase(
+            std::find(candidateCores.begin(), candidateCores.end(), core));
         return core;
     }
 
@@ -1030,8 +1032,8 @@ CoreArbiterServer::findGoodCoreForProcess(
     }
 
     // If a core is willing to share, find any available core.
-    core = candidates.front();
-    candidates.pop_front();
+    core = candidateCores.front();
+    candidateCores.pop_front();
     return core;
 }
 
