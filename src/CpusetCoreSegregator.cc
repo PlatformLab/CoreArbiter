@@ -136,7 +136,7 @@ CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
 
         lseek(cpusetFile, 0, SEEK_SET);
 
-        int retVal = write(cpusetFile, threadIdStr, strlen(threadIdStr));
+        ssize_t retVal = write(cpusetFile, threadIdStr, strlen(threadIdStr));
         if (retVal < 0) {
             // This error is likely because the thread has exited. We need to
             // close and reopen the file to prevent future errors.
@@ -186,8 +186,8 @@ CpusetCoreSegregator::setUnmanagedCores() {
     std::string unmanagedCoresString = unmanagedCores.str() + "\n";
     LOG(DEBUG, "Changing unmanaged cpuset to %s", unmanagedCoresString.c_str());
 
-    int retVal = write(unmanagedCpusetCpus, unmanagedCoresString.c_str(),
-                       unmanagedCoresString.size());
+    ssize_t retVal = write(unmanagedCpusetCpus, unmanagedCoresString.c_str(),
+                           unmanagedCoresString.size());
 
     if (retVal < 0) {
         LOG(ERROR, "Failed to write to unmanagedCpusetPus; errno %d: %s", errno,
@@ -224,8 +224,8 @@ CpusetCoreSegregator::removeExtraneousThreads() {
                 // unmanagedCpusetTasks.
                 char threadIdStr[100];
                 sprintf(threadIdStr, "%d\n", threadId);
-                int retVal = write(unmanagedCpusetTasks, threadIdStr,
-                                   strlen(threadIdStr));
+                ssize_t retVal = write(unmanagedCpusetTasks, threadIdStr,
+                                       strlen(threadIdStr));
                 if (retVal < 0) {
                     // This error is likely because the thread has exited.
                     // Sleeping helps keep the kernel from giving more errors
@@ -337,7 +337,7 @@ CpusetCoreSegregator::createCpuset(std::string dirName, std::string cores,
             strerror(errno));
         exit(-1);
     }
-    int bytesWritten = write(memsFile, mems.c_str(), mems.size());
+    ssize_t bytesWritten = write(memsFile, mems.c_str(), mems.size());
     if (bytesWritten < 0) {
         LOG(ERROR, "Unable to write to %s; errno %d: %s", memsPath.c_str(),
             errno, strerror(errno));
@@ -394,7 +394,8 @@ CpusetCoreSegregator::moveProcsToCpuset(std::string fromPath,
     for (pid_t processId : fromPids) {
         char processIdStr[100];
         sprintf(processIdStr, "%d\n", processId);
-        int bytesWritten = write(toFile, processIdStr, strlen(processIdStr));
+        ssize_t bytesWritten =
+            write(toFile, processIdStr, strlen(processIdStr));
         if (bytesWritten < 0) {
             // Writing fails if we try to move a kernel process. This is normal
             // behavior, and so we can ignore it.
@@ -423,8 +424,9 @@ CpusetCoreSegregator::removeThreadFromCore(int coreId) {
 
     char threadIdStr[100];
     sprintf(threadIdStr, "%d\n", threadId);
-    int retVal = write(unmanagedCpusetTasks, threadIdStr, strlen(threadIdStr));
-    if (retVal < 0) {
+    ssize_t bytesWritten =
+        write(unmanagedCpusetTasks, threadIdStr, strlen(threadIdStr));
+    if (bytesWritten < 0) {
         // This error is likely because the thread has exited.
         // Sleeping helps keep the kernel from giving more errors
         // the next time we try to move a legitimate thread.
