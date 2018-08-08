@@ -1182,7 +1182,7 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
             }
             process->stats->numBlockedThreads--;
             LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
-                    process->stats->numBlockedThreads.load());
+                process->stats->numBlockedThreads.load());
 
             // Awaken the blocked thread.
             if (!testingSkipSocketCommunication) {
@@ -1329,10 +1329,16 @@ CoreArbiterServer::distributeCores() {
         lastProcessGrantedIndex = i;
     }
 
-    // We found no core requests from any processes, so there's nothing to do.
+    // We found no core requests from any processes, so we only need to handle
+    // zero-core requests.
     if (lastProcessGrantedIndex == -1) {
-        LOG(WARNING,
+        LOG(NOTICE,
             "distributeCores invoked with no core requests from any process");
+        for (auto processIdAndInfo : processIdToInfo) {
+            processIdAndInfo.second->logicallyOwnedCores.clear();
+        }
+        makeCoreAssignmentsConsistent();
+        timeTrace("SERVER: Finished core distribution");
         return;
     }
     // Check whether hypertwin constraints are satisfied, and reduce if
@@ -1416,7 +1422,17 @@ CoreArbiterServer::distributeCores() {
         }
     }
 
+    // Add mappings in processToCoreCount for all processes known to the
+    // arbiter, ensuring that requests for 0 cores are honored.
+    for (auto processIdAndInfo : processIdToInfo) {
+        if (processToCoreCount.find(processIdAndInfo.second) ==
+            processToCoreCount.end()) {
+            processToCoreCount[processIdAndInfo.second] = 0;
+        }
+    }
+
     sortedProcesses = getProcessesOrderedByCoreCount(processToCoreCount);
+
     // Perform actual assignment of cores to processes within each socket
     for (ProcessInfo* process : sortedProcesses) {
         int numaNode = processToSocket[process];
