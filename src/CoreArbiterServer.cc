@@ -1180,6 +1180,9 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
                     core->id);
                 continue;
             }
+            process->stats->numBlockedThreads--;
+            LOG(DEBUG, "Process %d now has %u blocked threads", process->id,
+                    process->stats->numBlockedThreads.load());
 
             // Awaken the blocked thread.
             if (!testingSkipSocketCommunication) {
