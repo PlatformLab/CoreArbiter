@@ -14,11 +14,12 @@
  */
 
 #include <stdio.h>
+#include <sys/types.h>
 #include <atomic>
 #include <thread>
 
+#include "Colors.h"
 #include "CoreArbiterClient.h"
-#include "Logger.h"
 #include "PerfUtils/Cycles.h"
 #include "PerfUtils/Stats.h"
 #include "PerfUtils/TimeTrace.h"
@@ -52,8 +53,11 @@ coreExec(CoreArbiterClient* client) {
     while (!end) {
         client->blockUntilCoreAvailable();
         numActiveCores++;
+        fprintf(stderr, RED("Bumped active cores with tid %d\n"),
+                (pid_t)syscall(SYS_gettid));
         while (!client->mustReleaseCore())
             ;
+        fprintf(stderr, BLUE("Core release requested\n"));
         numActiveCores--;
     }
 }
