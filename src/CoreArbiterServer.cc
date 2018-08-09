@@ -829,7 +829,7 @@ CoreArbiterServer::cleanupConnection(int socket) {
     ThreadInfo* thread = threadSocketToInfo[socket];
     ProcessInfo* process = thread->process;
 
-    LOG(ERROR, "Cleaning up state for thread %d", thread->id);
+    LOG(NOTICE, "Cleaning up state for thread %d", thread->id);
 
     if (sys->close(socket) < 0) {
         LOG(ERROR, "Error closing socket: %s", strerror(errno));
@@ -844,6 +844,7 @@ CoreArbiterServer::cleanupConnection(int socket) {
         ownedCores.erase(
             std::find(ownedCores.begin(), ownedCores.end(), thread->core));
         thread->core->managedThread = NULL;
+        thread->core->coreReleaseRequested = false;
         thread->core->threadRemovalTime = Cycles::rdtsc();
         process->stats->numOwnedCores--;
 
@@ -1117,6 +1118,11 @@ CoreArbiterServer::makeCoreAssignmentsConsistent() {
     for (auto kvpair : processIdToInfo) {
         ProcessInfo* process = kvpair.second;
         // Request preemption on cores which are no longer logically owned.
+        LOG(DEBUG,
+            "Making core assignments consistent for process %d: %zu "
+            "physicallyOwnedCores, %zu logicallyOwnedCores",
+            process->id, process->physicallyOwnedCores.size(),
+            process->logicallyOwnedCores.size());
         for (CoreInfo* core : process->physicallyOwnedCores) {
             if (process->logicallyOwnedCores.find(core) ==
                 process->logicallyOwnedCores.end()) {
