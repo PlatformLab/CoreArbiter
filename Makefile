@@ -26,7 +26,12 @@ OBJECT_NAMES := CoreArbiterServer.o  CoreArbiterClient.o mkdir_p.o Logger.o Code
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find src -name '*.h')
+
+ifeq ($(MAKECMDGOALS),clean)
+DEP=
+else
 DEP=$(OBJECTS:.o=.d)
+endif # ($(MAKECMDGOALS),clean)
 
 SERVER_BIN = $(OBJECT_DIR)/coreArbiterServer
 CLIENT_BIN =  $(OBJECT_DIR)/client
