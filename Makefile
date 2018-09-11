@@ -75,16 +75,16 @@ test: $(OBJECT_DIR)/CoreArbiterServerTest $(OBJECT_DIR)/CoreArbiterClientTest  $
 	# $(OBJECT_DIR)/CoreArbiterRequestTest
 
 $(OBJECT_DIR)/CoreArbiterServerTest: $(OBJECT_DIR)/CoreArbiterServerTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
-	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
+	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS)  -o $@
 
 $(OBJECT_DIR)/CoreArbiterClientTest: $(OBJECT_DIR)/CoreArbiterClientTest.o $(OBJECT_DIR)/libgtest.a $(OBJECT_DIR)/libCoreArbiter.a
-	$(CXX) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS) -o $@
+	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $< $(GTEST_DIR)/src/gtest_main.cc $(TEST_LIBS) $(LIBS) -o $@
 
 $(OBJECT_DIR)/CoreArbiterRequestTest: $(OBJECT_DIR)/CoreArbiterRequestTest.o $(OBJECT_DIR)/libCoreArbiter.a
-	$(CXX) $(INCLUDE) $(CCFLAGS) $^  $(LIBS)  -o $@
+	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $^  $(LIBS)  -o $@
 
 $(OBJECT_DIR)/CoreArbiterRampDownTest: $(OBJECT_DIR)/CoreArbiterRampDownTest.o $(OBJECT_DIR)/libCoreArbiter.a
-	$(CXX) $(INCLUDE) $(CCFLAGS) $^  $(LIBS)  -o $@
+	$(CXX) $(LDFLAGS) $(INCLUDE) $(CCFLAGS) $^  $(LIBS)  -o $@
 
 $(OBJECT_DIR)/libgtest.a:
 	$(CXX) -I${GTEST_DIR}/include -I${GTEST_DIR} \
