@@ -25,6 +25,11 @@ std::string socketPath = "/tmp/CoreArbiter/socket";
 std::string sharedMemoryPath = "/tmp/CoreArbiter/sharedmemory";
 std::vector<int> coresUsed = std::vector<int>();
 
+const char usage[] =
+"Usage: ./coreArbiterServer [-h] [--coresUsed <comma_separated_range_list>]"
+" [--socketPath <path_to_serving_socket>] [--sharedMemoryPath <path_to_shared memory>]"
+" [--logLevel DEBUG|NOTICE|WARNING|ERROR|SILENT]";
+
 /**
  * This function currently supports only long options.
  */
@@ -42,7 +47,8 @@ parseOptions(int* argcp, const char** argv) {
         int id;
         // Does the option take an argument?
         bool takesArgument;
-    } optionSpecifiers[] = {{"socketPath", 'p', true},
+    } optionSpecifiers[] = {{"help", 'h', false},
+                            {"socketPath", 'p', true},
                             {"sharedMemoryPath", 'm', true},
                             {"coresUsed", 's', true},
                             {"logLevel", 'l', true}};
@@ -83,6 +89,9 @@ parseOptions(int* argcp, const char** argv) {
             }
         }
         switch (optionId) {
+            case 'h':
+                puts(usage);
+                exit(0);
             case 'p':
                 socketPath = optionArgument;
                 break;
