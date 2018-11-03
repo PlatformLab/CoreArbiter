@@ -1001,8 +1001,6 @@ CoreArbiterServer::findGoodCoreForProcess(
             }
             return desiredCore;
         }
-
-        availableManagedCoreIds.insert(candidate->id);
     }
 
     // Next look for a core whose hypertwin is also in the set of
