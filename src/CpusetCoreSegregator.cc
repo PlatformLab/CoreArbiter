@@ -91,7 +91,7 @@ CpusetCoreSegregator::CpusetCoreSegregator() {
     // unmanaged cpuset.
     unmanagedTasksPath = unmanagedCpusetPath + "/tasks";
     unmanagedCpusetTasks = open(unmanagedTasksPath.c_str(), O_RDWR);
-    if (!unmanagedCpusetTasks < 0) {
+    if (unmanagedCpusetTasks < 0) {
         LOG(ERROR, "Unable to open %s; errno %d: %s",
             unmanagedTasksPath.c_str(), errno, strerror(errno));
         exit(-1);
@@ -210,8 +210,9 @@ CpusetCoreSegregator::removeExtraneousThreads() {
             continue;
         }
 
-        int threadId = coreToThread[coreId];
-        if (threadId > 0 || threadId == COERCE_IDLE) {
+        int managedThreadId = coreToThread[coreId];
+        // Either a valid thread or forcibly idled core.
+        if (managedThreadId > 0 || managedThreadId == COERCE_IDLE) {
             int fromFile = coreToCpusetFile[coreId];
             std::vector<int> tids =
                 PerfUtils::Util::readIntegers(fromFile, '\n');
@@ -232,9 +233,9 @@ CpusetCoreSegregator::removeExtraneousThreads() {
                     // Sleeping helps keep the kernel from giving more errors
                     // the next time we try to move a legitimate thread.
                     LOG(ERROR,
-                        "Unable to write %d to unmanaged cpuset file; errno "
+                        "Unable to write %d from core %d to unmanaged cpuset file; errno "
                         "%d: %s",
-                        threadId, errno, strerror(errno));
+                        threadId, coreId, errno, strerror(errno));
                 }
             }
         }
