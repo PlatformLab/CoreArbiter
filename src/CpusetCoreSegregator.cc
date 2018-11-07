@@ -230,12 +230,17 @@ CpusetCoreSegregator::removeExtraneousThreads() {
                                        strlen(threadIdStr));
                 if (retVal < 0) {
                     // This error is likely because the thread has exited.
-                    // Sleeping helps keep the kernel from giving more errors
-                    // the next time we try to move a legitimate thread.
                     LOG(ERROR,
                         "Unable to write %d from core %d to unmanaged cpuset file; errno "
                         "%d: %s",
                         threadId, coreId, errno, strerror(errno));
+                    // Re-opening the file descriptor appears to prevent the
+                    // kernel from returning the same contents for the while
+                    // even when it should no longer be there.
+                    close(fromFile);
+                    coreToCpusetFile[coreId] =
+                        open(coreToCpusetPath[coreId].c_str(), O_RDWR);
+                    break;
                 }
             }
         }
