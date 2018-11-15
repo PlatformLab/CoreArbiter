@@ -101,6 +101,10 @@ class CoreArbiterServer {
         // intended assignment. NULL means this core is unmanaged.
         ProcessInfo* owner;
 
+        // A monotonically increasing value that is incremented each time this
+        // core is preempted from an application.
+        uint64_t epoch;
+
         // The last time (in cycles) that this core had a thread removed from
         // it. If there is no thread running on this core, this value tells us
         // how long the core has been unoccupied.
@@ -269,6 +273,9 @@ class CoreArbiterServer {
     struct TimerInfo {
         pid_t processId;
         CoreInfo* coreInfo;
+
+        // The epoch of the core at the time this preemption timer was created.
+        uint64_t coreEpoch;
     };
 
     bool handleEvents();

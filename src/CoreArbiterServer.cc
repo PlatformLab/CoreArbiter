@@ -776,7 +776,7 @@ CoreArbiterServer::timeoutThreadPreemption(int timerFd) {
     // because it is possible for a process to lose and then regain the core
     // that the timer is associated with in the time between the time the timer
     // was set and the time it went off.
-    if (!thread->core->coreReleaseRequested) {
+    if (!thread->core->coreReleaseRequested || thread->core->epoch != timer->coreEpoch) {
         LOG(DEBUG,
             "Core retrieval timer went off for process %d, but process "
             "already released the core it was supposed to.\n",
@@ -1562,6 +1562,9 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
     process->stats->threadCommunicationBlocks[core->id].coreReleaseRequested =
         true;
 
+    // Record that a new preemption has begun on this core.
+    core->epoch++;
+
     int timerFd = sys->timerfd_create(CLOCK_MONOTONIC, 0);
     LOG(DEBUG, "Created timerFd %d", timerFd);
     if (timerFd < 0) {
@@ -1588,8 +1591,7 @@ CoreArbiterServer::requestCoreRelease(struct CoreInfo* core) {
         LOG(ERROR, "Error adding timerFd to epoll: %s", strerror(errno));
         return;
     }
-
-    timerFdToInfo[timerFd] = {process->id, core};
+    timerFdToInfo[timerFd] = {process->id, core, core->epoch};
 
     core->coreReleaseRequested = true;
     timeTrace("SERVER: Finished requesting core release");
