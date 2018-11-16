@@ -213,6 +213,8 @@ CpusetCoreSegregator::removeExtraneousThreads() {
         int managedThreadId = coreToThread[coreId];
         // Either a valid thread or forcibly idled core.
         if (managedThreadId > 0 || managedThreadId == COERCE_IDLE) {
+            close(coreToCpusetFile[coreId]);
+            coreToCpusetFile[coreId] = open(coreToCpusetPath[coreId].c_str(), O_RDWR);
             int fromFile = coreToCpusetFile[coreId];
             std::vector<int> tids =
                 PerfUtils::Util::readIntegers(fromFile, '\n');
