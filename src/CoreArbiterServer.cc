@@ -974,6 +974,7 @@ getHyperTwin(int coreId) {
     int twin1, twin2;
     // The first cpuid in the file is always that of the physical core
     fscanf(siblingFile, "%d,%d", &twin1, &twin2);
+    fclose(siblingFile);
     if (coreId == twin1)
         return twin2;
     return twin1;
