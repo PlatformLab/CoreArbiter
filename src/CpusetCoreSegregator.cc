@@ -131,6 +131,12 @@ CpusetCoreSegregator::setThreadForCore(int coreId, int threadId) {
     // If there is a special state, it will get picked up by garbage
     // collection.
     if (threadId > 0) {
+        // Reopen before writing to measure the cost.
+        // TODO: Add in other places.
+        close(coreToCpusetFile[coreId]);
+        coreToCpusetFile[coreId] =
+            open(coreToCpusetPath[coreId].c_str(), O_RDWR);
+
         int cpusetFile = coreToCpusetFile[coreId];
         char threadIdStr[MAX_PID_LENGTH];
         snprintf(threadIdStr, MAX_PID_LENGTH, "%d\n", threadId);
