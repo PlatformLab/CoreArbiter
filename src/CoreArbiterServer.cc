@@ -971,11 +971,15 @@ getHyperTwin(int coreId) {
                                   std::to_string(coreId) +
                                   "/topology/thread_siblings_list";
     FILE* siblingFile = fopen(siblingFilePath.c_str(), "r");
-    int twin1, twin2;
+    int twin1=-1, twin2=-1;
+
     // The first cpuid in the file is always that of the physical core
     fscanf(siblingFile, "%d,%d", &twin1, &twin2);
     fclose(siblingFile);
-    if (coreId == twin1)
+
+    // thread_siblings_list file of Intel i5 CPU: 0
+    // thread_siblings_list file of Intel i7 CPU: 0,4
+    if (coreId == twin1 && twin2 != -1)
         return twin2;
     return twin1;
 }
